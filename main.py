@@ -27,12 +27,12 @@ env_config = {
     "NUM_ACTIONS": 3,
 
     "FEE": 0.05,
-    "LEVERAGE": 5.0,
+    "LEVERAGE": 1.0,
     "MAX_EP": 10080,
 
     "frameskip": (1, 15),
     "mode": "train",
-    "col": "btc_adjusted"
+    "col": 'btc_adjusted'
 }
 from pymongo import MongoClient
 client = MongoClient("mongodb://admin:dbstnfh123@192.168.0.201:27017")
@@ -106,7 +106,7 @@ if __name__ == "__main__":
         "disable_env_checking": True,
         "env": CryptoEnv,
         "env_config": env_config,
-        "gamma": 0.99,
+        "gamma": 0.0,
         "grad_clip": None,
         "model": {
             "custom_model": "my_torch_model",

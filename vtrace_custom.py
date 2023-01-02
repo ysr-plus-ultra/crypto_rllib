@@ -108,8 +108,8 @@ class VTraceCustomLoss:
             G_value = self.vtrace_returns.vs.to(device)
             G_pg = self.vtrace_returns.pg_value.to(device)
 
-            new_mu = torch.mean(G_value * valid_mask)
-            new_nu = torch.mean(torch.pow(G_value * valid_mask, 2))
+            new_mu = torch.sum(G_value * valid_mask) / torch.sum(valid_mask)
+            new_nu = torch.sum(torch.pow(G_value * valid_mask, 2)) / torch.sum(valid_mask)
 
             model.new_mu.copy_(new_mu)
             model.new_nu.copy_(new_nu)
@@ -139,6 +139,7 @@ class VTraceCustomLoss:
         )
         inside = (model.alpha * torch.exp(model.beta) - 1)
         gamma = 1 + torch.pow(inside, 2.0)
+
         self.final_loss = (self.total_loss * gamma) + 1.0 * (model.alpha ** 2)
 
         # Move v-trace results back to GPU for actual loss computing.

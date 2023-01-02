@@ -46,22 +46,21 @@ class ServeModel:
 
     async def __call__(self, request: Request):
         json_input = await request.json()
-        obs = json_input["observation"]
-        state1 = json_input["state1"]
-        state2 = json_input["state2"]
+        obs = [np.array(x) for x in json_input["observation"]]
+        state1 = np.array([np.array(x) for x in json_input["state1"]])
+        state2 = np.array([np.array(x) for x in json_input["state2"]])
         prev_a = json_input["prev_a"]
         prev_r = json_input["prev_r"]
 
-        action, state_out, _ = self.trainer.compute_single_action(
-            observation=obs,
-            state=[np.array(state1), np.array(state2)],
-            prev_action=np.array(prev_a),
-            prev_reward=prev_r,
-            policy_id="default_policy")
+        action, state_out, _ = self._policy.compute_actions(
+            obs_batch=np.array(obs),
+            state_batches=[state1, state2],
+            prev_action_batch=prev_a,
+            prev_reward_batch=prev_r)
 
-        return {"action": int(action), "state_h": state_out[0], "state_c": state_out[1] }
+        return {"action": action, "state_h": state_out[0], "state_c": state_out[1] }
 
 if __name__ == "__main__":
     ray.init(address="auto", namespace="serve")
     serve.start(detached=True)
-    ServeModel.deploy("D:\checkpoint\checkpoint_000884\checkpoint-884")
+    ServeModel.deploy("D:\checkpoint\checkpoint_003762\checkpoint-3762")
