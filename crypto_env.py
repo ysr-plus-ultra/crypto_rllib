@@ -58,8 +58,8 @@ class CryptoEnv(gym.Env):
             self.done = True
 
         if self.done:
-            self.ep_mean = 0.99 * self.ep_mean + 0.01 * self.ep
-            # print("{}/{:.1f}, {:.3f} / {:.3f}".format(self.ep, self.ep_mean, np.exp(self.cumsum), np.exp(self.max_wallet)))
+            self.ep_mean = 0.9 * self.ep_mean + 0.1 * self.ep
+            print("{}/{:.1f}, {:.3f} / {:.3f}".format(self.ep, self.ep_mean, np.exp(self.cumsum), np.exp(self.max_wallet)))
 
         return obs, reward, self.done, {}
 
@@ -72,6 +72,7 @@ class CryptoEnv(gym.Env):
     def reset(self):
         if self.mode=="train":
             self.start_point = np.random.randint(0, self.df_size - self.max_ep + 1)
+            # self.start_point = 0
         else:
             self.start_point = 0
         self.cursor = 0

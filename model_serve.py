@@ -63,4 +63,4 @@ class ServeModel:
 if __name__ == "__main__":
     ray.init(address="auto", namespace="serve")
     serve.start(detached=True)
-    ServeModel.deploy("D:\checkpoint\checkpoint_003762\checkpoint-3762")
+    ServeModel.deploy("D:\checkpoint\checkpoint_004957\checkpoint-4957")

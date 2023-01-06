@@ -112,7 +112,7 @@ if __name__ == "__main__":
             "custom_model": "my_torch_model",
             "lstm_use_prev_action": True,
             "lstm_use_prev_reward": True,
-            "lstm_cell_size": 4,
+            "lstm_cell_size": 6,
 
             # Extra kwargs to be passed to your model's c'tor.
             "custom_model_config": {

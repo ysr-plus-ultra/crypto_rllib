@@ -109,7 +109,7 @@ class VTraceCustomLoss:
             G_pg = self.vtrace_returns.pg_value.to(device)
 
             new_mu = torch.sum(G_value * valid_mask) / torch.sum(valid_mask)
-            new_nu = torch.sum(torch.pow(G_value * valid_mask, 2)) / torch.sum(valid_mask)
+            new_nu = torch.sum(torch.pow(G_value, 2) * valid_mask) / torch.sum(valid_mask)
 
             model.new_mu.copy_(new_mu)
             model.new_nu.copy_(new_nu)

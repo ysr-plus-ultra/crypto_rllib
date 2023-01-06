@@ -31,8 +31,8 @@ class CustomRNNModel(TorchRNN, nn.Module):
         num_outputs,
         model_config,
         name,
-        fc_size=4,
-        lstm_size=4,
+        fc_size=6,
+        lstm_size=6,
     ):
         nn.Module.__init__(self)
         super().__init__(obs_space,
@@ -62,13 +62,14 @@ class CustomRNNModel(TorchRNN, nn.Module):
                 self.action_dim += int(len(space))
 
         self.fc1 = nn.Linear(self.obs_size, self.fc_size)
-        # self.ln = nn.LayerNorm(self.fc_size)
+
 
         if self.use_prev_action:
             self.fc_size += num_outputs
         if self.use_prev_reward:
             self.fc_size += 1
 
+        self.norm_method = nn.BatchNorm1d(self.fc_size, momentum=0.01)
         self.rnn = nn.LSTM(self.fc_size, self.cell_size, batch_first=True)
 
         self._logits_branch = nn.Linear(self.cell_size, num_outputs)
@@ -120,7 +121,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
             updated_mu = (1 - beta) * self.mu + beta * self.new_mu
             updated_nu = (1 - beta) * self.nu + beta * self.new_nu
 
-            updated_sigma = torch.clamp(torch.sqrt(updated_nu - updated_mu ** 2), 1e-6, 1e6)
+            updated_sigma = torch.clamp(torch.sqrt(updated_nu - (updated_mu ** 2)), 1e-6, 1e6)
 
             old_weight = self._value_branch.weight.data.clone()
             old_bias = self._value_branch.bias.data.clone()
@@ -138,8 +139,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
     def forward(self, input_dict, state, seq_lens):
 
         net = self.fc1(input_dict["obs_flat"].float())
-        # net = self.ln(net)
-        wrapped_out = nn.functional.silu(net)
+        wrapped_out = nn.functional.relu(net)
         # Concat. prev-action/reward if required.
         prev_a_r = []
         # Prev actions.
@@ -175,12 +175,16 @@ class CustomRNNModel(TorchRNN, nn.Module):
             seq_lens = torch.Tensor(seq_lens).int()
         max_seq_len = wrapped_out.shape[0] // seq_lens.shape[0]
         self.time_major = self.model_config.get("_time_major", False)
+
+        wrapped_out = self.norm_method(wrapped_out)
         inputs = add_time_dimension(
             wrapped_out,
             max_seq_len=max_seq_len,
             framework="torch",
             time_major=self.time_major,
         )
+
+
         output, new_state = self.forward_rnn(inputs, state, seq_lens)
         output = torch.reshape(output, [-1, self.num_outputs])
         return output, new_state
