@@ -11,13 +11,13 @@ class CryptoEnv(gym.Env):
 
         self.observation_space = Box(-np.inf, np.inf, shape=(config['NUM_STATES'],), dtype=np.float32)
         self.action_space = Discrete(config['NUM_ACTIONS'])
-
-        self.fee = np.log(1 - (config['FEE'] / 100))
+        self.max_fee = config['FEE']
         self.max_ep = config['MAX_EP']
         self.last_action = None
 
         self.num_states = config['NUM_STATES']
         self.frameskip = config['frameskip']
+        self.filter = 0.005 * np.sqrt(self.frameskip) * np.array([1, 1, 1, np.sqrt(2), 1, 1])
         self._period0=None
         self._period1=None
         try:
@@ -57,9 +57,6 @@ class CryptoEnv(gym.Env):
         if self.done:
             return np.zeros(self.num_states), 0, self.done, {}
 
-        # if action==0:
-        #     action = random.choice([1,2])
-
         if isinstance(self.frameskip, int):
             self.num_steps = self.frameskip
         else:
@@ -90,14 +87,14 @@ class CryptoEnv(gym.Env):
     def reset(self):
 
         if self.mode=="train":
-            self.start_point = 0
+            # self.start_point = 0
 
             # start_idx = np.random.randint(self.df_size//self.max_ep)
             # self.start_point = start_idx * self.max_ep
 
-            # self.start_point = np.random.randint(0, self.df_size - (self.max_ep//2) - 1)
+            self.start_point = np.random.randint(0, self.df_size - self.max_ep - 1)
         else:
-            self.start_point = 0
+            self.start_point = np.random.randint(0, self.df_size - self.max_ep - 1)
 
 
 
@@ -114,20 +111,20 @@ class CryptoEnv(gym.Env):
         self.max_wallet = 0.0
         self.cumsum = 0.0
         self.done = False
-        self.fee_sum = 0.0
+        self.fee = np.log(1-(np.random.uniform(0.0,self.max_fee)/100))
 
-        # if isinstance(self.frameskip, int):
-        #     self.num_steps = self.frameskip
-        # else:
-        #     self.num_steps = np.random.randint(self.frameskip[0], self.frameskip[1]+1)
-        self.num_steps = 5
+        if isinstance(self.frameskip, int):
+            self.num_steps = self.frameskip
+        else:
+            self.num_steps = np.random.randint(self.frameskip[0], self.frameskip[1]+1)
+
         self._period0 = 0
         self._period1 = self.num_steps
 
         state = self.getState()
 
-        clip_value = self.df.loc[:, 'btc_FUTURES_ret'].iloc[self._period1:]
-        self.df.loc[:, 'btc_adjusted'] = clip_value - np.nanmean(clip_value)
+        # clip_value = self.df.loc[:, 'btc_FUTURES_ret'].iloc[self._period1:]
+        # self.df.loc[:, 'btc_adjusted'] = clip_value - np.nanmean(clip_value)
 
         return state
 
@@ -137,6 +134,7 @@ class CryptoEnv(gym.Env):
         signal_gap = abs(last_signal - signal)
 
         gap = np.nansum(self.df.iloc[self._period0:self._period1][self.col].values)
+
         reward = 0.0
         reward += self.fee * signal_gap
         reward += signal * gap
@@ -170,9 +168,12 @@ class CryptoEnv(gym.Env):
         diff_matrix = np.subtract.outer(log_price_ohlc, log_price_ohlc)
         self.state = np.zeros(self.num_states)
 
-        self.state[:4] = price_ohlc
-        self.state[-6:] = diff_matrix[np.triu_indices(4, k = 1)]
-
+        # self.state[:4] = price_ohlc
+        # self.state[-6:] = diff_matrix[np.triu_indices(4, k = 1)]
+        state1 = diff_matrix[np.triu_indices(4, k = 1)]
+        state1 = np.clip(state1, -self.filter, self.filter)
+        self.state[:6] = state1
+        self.state[-1] = self.fee
         return self.state
 
     def render(self, mode='human', close=False):

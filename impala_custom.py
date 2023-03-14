@@ -524,6 +524,10 @@ class Impala(Algorithm):
         )
         self._learner_thread.start()
 
+    # def after_train_step(self, train_results: ResultDict) -> None:
+    #     if 'default_policy' in train_results.keys():
+    #         _policy = self.workers.local_worker().get_policy()
+    #         _policy.model.update_popart(1e-3)
     @override(Algorithm)
     def training_step(self) -> ResultDict:
         # First, check, whether our learner thread is still healthy.

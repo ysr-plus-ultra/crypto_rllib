@@ -113,9 +113,10 @@ class VTraceLoss:
             clip_pg_rho_threshold=clip_pg_rho_threshold,
         )
         # Move v-trace results back to GPU for actual loss computing.
+
         def valid_mean(value, valid_mask):
             return torch.sum(value * valid_mask) / torch.sum(valid_mask)
-
+        step_count = torch.sum(valid_mask)
         with torch.no_grad():
             old_mu = model.mu
             old_sigma = model.sigma
@@ -134,19 +135,21 @@ class VTraceLoss:
             normalized_G_t_vtrace = ((G_value - old_mu) / old_sigma) * valid_mask
             normalized_G_t_pi = ((G_pg - old_mu) / old_sigma) * valid_mask
 
+            pg_advantage = self.vtrace_returns.clipped_pg_rhos.to(device) * (normalized_G_t_pi - normalized_values)
+
         self.value_targets = self.vtrace_returns.vs.to(device)
         # The policy gradients loss.
-        pg_advantage = self.vtrace_returns.clipped_pg_rhos.to(device) * (normalized_G_t_pi - normalized_values)
+
         self.pi_loss = -torch.sum(
-            actions_logp * pg_advantage.detach() * valid_mask
-        ) / torch.sum(valid_mask)
+            actions_logp * pg_advantage * valid_mask
+        ) / step_count
 
         # The baseline loss.
-        delta = (normalized_values - normalized_G_t_vtrace) * valid_mask
-        self.vf_loss = 0.5 * torch.sum(torch.pow(delta, 2.0)) / torch.sum(valid_mask)
+        delta = (normalized_values - normalized_G_t_vtrace)
+        self.vf_loss = 0.5 * torch.sum(torch.pow(delta, 2.0) * valid_mask) / step_count
 
         # The entropy loss.
-        self.entropy = torch.sum(actions_entropy * valid_mask) / torch.sum(valid_mask)
+        self.entropy = torch.sum(actions_entropy * valid_mask) / step_count
         self.mean_entropy = self.entropy
 
         # # The summed weighted loss.
@@ -258,7 +261,9 @@ class ImpalaTorchPolicyCustom(
                                 ) -> Union[TensorType, List[TensorType]]:
 
         _ = model.update_popart(1e-3)
+
         model_out, _ = model(train_batch)
+
         action_dist = dist_class(model_out, model)
 
         if isinstance(self.action_space, gym.spaces.Discrete):
@@ -367,7 +372,9 @@ class ImpalaTorchPolicyCustom(
                 "entropy": torch.mean(
                     torch.stack(self.get_tower_stats("mean_entropy"))
                 ),
-                "zero_action": torch.mean((prev_a-1)*(prev_a-2)/2),
+                "action_0": torch.mean((prev_a-1)*(prev_a - 2.0)/2),
+                "action_1": -torch.mean((prev_a) * (prev_a - 2.0)),
+                "action_2": torch.mean((prev_a) * (prev_a - 1.0) / 2),
                 "var_gnorm": global_norm(self.model.trainable_variables()),
                 "vf_loss": torch.mean(torch.stack(self.get_tower_stats("vf_loss"))),
                 "vf_explained_var": torch.mean(

@@ -10,11 +10,33 @@ torch, nn = try_import_torch()
 import numpy as np
 from gym.spaces import Discrete, Box
 import os
+import zlib, json, base64
+ZIPJSON_KEY = 'base64(zip(o))'
 os.environ["CUBLAS_WORKSPACE_CONFIG"]=":4096:2"
 torch.backends.cudnn.benchmark = True
 ModelCatalog.register_custom_model("my_torch_model", CustomRNNModel)
 _action_space = Discrete(3)
-_observation_space = Box(-np.inf, np.inf, shape=(16,), dtype=np.float32)
+_observation_space = Box(-np.inf, np.inf, shape=(7,), dtype=np.float32)
+class NumpyArrayEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return json.JSONEncoder.default(self, obj)
+
+def json_zip(j):
+    j = base64.b64encode(
+            zlib.compress(
+                json.dumps(j, cls=NumpyArrayEncoder).encode('utf-8')
+            )
+        )
+
+    return j
+
+def json_unzip(j, insist=True):
+    j = zlib.decompress(base64.b64decode(j))
+    j = json.loads(j)
+    return j
+
 @serve.deployment(route_prefix="/model", ray_actor_options={"num_gpus": 0.5})
 class ServeModel:
     def __init__(self, checkpoint_path):
@@ -42,21 +64,26 @@ class ServeModel:
             traceback.print_exc()
 
     async def __call__(self, request: Request):
-        json_input = await request.json()
+        compressed_input = await request.body()
+        json_input = json_unzip(compressed_input)
+
         obs = [np.array(x) for x in json_input["observation"]]
         state1 = np.array([np.array(x) for x in json_input["state1"]])
+        state2 = np.array([np.array(x) for x in json_input["state2"]])
         prev_a = json_input["prev_a"]
         prev_r = json_input["prev_r"]
 
         action, state_out, _ = self._policy.compute_actions(
-            obs_batch=torch.from_numpy(np.array(obs).astype('float32')),
-            state_batches=[torch.from_numpy(state1.astype('float32'))],
+            obs_batch=np.array(obs),
+            state_batches=[state1, state2],
             prev_action_batch=prev_a,
             prev_reward_batch=prev_r)
 
-        return {"action": action, "state_h": state_out[0] }
+        value, normal = self._policy.model.value_function()
+        compressed_output = json_zip({"action": action, "state_h": state_out[0], "state_c": state_out[1], "value": value.to('cpu').detach().numpy() })
+        return compressed_output
 
 if __name__ == "__main__":
     ray.init(address="auto", namespace="serve")
     serve.start(detached=True)
-    ServeModel.deploy("D:\checkpoint\checkpoint_002169")
+    ServeModel.deploy("D:\modelbackup\checkpoint_001213")
