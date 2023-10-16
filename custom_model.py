@@ -32,8 +32,8 @@ class CustomRNNModel(TorchRNN, nn.Module):
         num_outputs,
         model_config,
         name,
-        fc_size=7,
-        lstm_size=64,
+        fc_size=6,
+        lstm_size=4,
     ):
         nn.Module.__init__(self)
         super().__init__(obs_space,
@@ -62,33 +62,30 @@ class CustomRNNModel(TorchRNN, nn.Module):
             else:
                 self.action_dim += int(len(space))
 
-        # self.fc1 = nn.Linear(self.obs_size, self.fc_size)
-        # self.fc2 = nn.Linear(self.fc_size, self.fc_size)
-
         self.fc1 = nn.Linear(self.obs_size, self.fc_size, bias=False)
         self.ln1 = nn.LayerNorm(self.fc_size)
         self.fc2 = nn.Linear(self.fc_size, self.fc_size, bias=False)
         self.ln2 = nn.LayerNorm(self.fc_size)
 
-        self.activation = nn.ReLU()
+        self.activation = nn.SiLU()
 
         if self.use_prev_action:
             self.fc_size += num_outputs
         if self.use_prev_reward:
             self.fc_size += 1
 
+        # self.rnn = nn.LSTM(self.fc_size, self.cell_size, batch_first=True)
         self.rnn = rnnlib.LayerNormLSTM(self.fc_size, self.cell_size, batch_first=True)
-
         self._logits_branch = nn.Linear(self.cell_size, num_outputs)
         self._value_branch = nn.Linear(self.cell_size, 1)
 
 
         self.mu = nn.Parameter(torch.tensor(0.0), requires_grad=False)
-        self.nu = nn.Parameter(torch.tensor(1.0), requires_grad=False)
-        self.sigma = nn.Parameter(torch.tensor(1.0), requires_grad=False)
+        self.nu = nn.Parameter(torch.tensor(1e-1), requires_grad=False)
+        self.sigma = nn.Parameter(torch.tensor(1e-1), requires_grad=False)
 
         self.new_mu = nn.Parameter(torch.tensor(0.0), requires_grad=False)
-        self.new_nu = nn.Parameter(torch.tensor(1.0), requires_grad=False)
+        self.new_nu = nn.Parameter(torch.tensor(1e-1), requires_grad=False)
 
 
         if model_config["lstm_use_prev_action"]:
@@ -109,6 +106,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
         #                                                self._value_branch.bias
         #                                                 + (self.bias_sigma*torch.randn_like(self._value_branch.bias)))
         normalized_output = self._value_branch(self._features)
+
         with torch.no_grad():
             value_output = normalized_output * self.sigma + self.mu
 
@@ -118,7 +116,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
         with torch.no_grad():
             updated_mu = (1 - beta) * self.mu + beta * self.new_mu
             updated_nu = (1 - beta) * self.nu + beta * self.new_nu
-            updated_sigma = torch.clamp(torch.sqrt(updated_nu - torch.pow(updated_mu,2)), 1e-4, 1e6)
+            updated_sigma = torch.clamp(torch.sqrt(updated_nu - torch.pow(updated_mu,2)), 1e-6, 1e6)
 
             old_weight = self._value_branch.weight.clone()
             old_bias = self._value_branch.bias.clone()
@@ -143,7 +141,10 @@ class CustomRNNModel(TorchRNN, nn.Module):
         net = self.activation(net)
         net = self.fc2(net)
         net = self.ln2(net)
-        wrapped_out = self.activation(net)
+        net = self.activation(net)
+        wrapped_out = net
+        # wrapped_out = float_input
+
         # Concat. prev-action/reward if required.
         prev_a_r = []
         # Prev actions.

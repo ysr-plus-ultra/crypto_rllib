@@ -142,15 +142,16 @@ class VTraceLoss:
 
         self.pi_loss = -torch.sum(
             actions_logp * pg_advantage * valid_mask
-        ) / step_count
+        )
 
         # The baseline loss.
-        delta = (normalized_values - normalized_G_t_vtrace)
-        self.vf_loss = 0.5 * torch.sum(torch.pow(delta, 2.0) * valid_mask) / step_count
+        delta = (normalized_G_t_vtrace - normalized_values)
+
+        self.vf_loss = 0.5 * torch.sum(torch.pow(delta, 2.0) * valid_mask)
 
         # The entropy loss.
-        self.entropy = torch.sum(actions_entropy * valid_mask) / step_count
-        self.mean_entropy = self.entropy
+        self.entropy = torch.sum(actions_entropy * valid_mask)
+        self.mean_entropy = self.entropy / step_count
 
         # # The summed weighted loss.
         self.total_loss = (
@@ -260,10 +261,8 @@ class ImpalaTorchPolicyCustom(
         train_batch: SampleBatch,
                                 ) -> Union[TensorType, List[TensorType]]:
 
-        _ = model.update_popart(1e-3)
-
+        _mu, _sigma = model.update_popart(3e-4)
         model_out, _ = model(train_batch)
-
         action_dist = dist_class(model_out, model)
 
         if isinstance(self.action_space, gym.spaces.Discrete):

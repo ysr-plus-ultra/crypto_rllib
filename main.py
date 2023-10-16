@@ -29,51 +29,28 @@ import time
 import psutil, gc
 from ray.tune.registry import register_env
 env_config = {
-    "NUM_STATES": 7,
+    "NUM_STATES": 13,
     "NUM_ACTIONS": 3,
 
-    "FEE": 0.07,
-    "MAX_EP": 7200,
-    "DF_SIZE": 1542240, #
+    "FEE": 0.04,
+    "MAX_EP": 14400,
+    "DF_SIZE": 172800, #
 
-    "frameskip": 10,
+    "frameskip": 5,
     "mode": "train",
-    "col": 'btc_adjusted'
 }
+
 from crypto_env import CryptoEnv
 torch, nn = try_import_torch()
 torch.backends.cudnn.benchmark = True
 def auto_garbage_collect(pct=80.0):
     if psutil.virtual_memory().percent >= pct:
         gc.collect()
-# def env_creator(env_config):
-#     env = gym.make("Pong-ram-v4")
-#     env = MonitorEnv(env)
-#     env = NoopResetEnv(env, noop_max=30)
-#     if "FIRE" in env.unwrapped.get_action_meanings():
-#         env = FireResetEnv(env)
-#     return env  # return an env instance
-# register_env("pong_env", env_creator)
-# model = {
-#     "custom_model": "my_torch_model",
-#     "lstm_use_prev_action": True,
-#     "lstm_use_prev_reward": True,
-#     "custom_model_config": {
-#     },
-# },
-# model = {
-#     "fcnet_hiddens": [32, 32],
-#     "fcnet_activation": "relu",
-#     "lstm_use_prev_action": True,
-#     "lstm_use_prev_reward": True,
-#     "use_lstm": True,
-#     "lstm_cell_size": 128,
-# },
 
 if __name__ == "__main__":
     ModelCatalog.register_custom_model("my_torch_model", CustomRNNModel)
     impala_config = ImpalaConfig()
-    impala_config = impala_config.training(gamma=0.0, lr=1e-3, train_batch_size=2048,
+    impala_config = impala_config.training(gamma=0.0, lr=3e-4, train_batch_size=2048,
                                            model = {
                                                "custom_model": "my_torch_model",
                                                "lstm_use_prev_action": True,
@@ -82,9 +59,8 @@ if __name__ == "__main__":
                                                },
                                            },
                                            vtrace=True,
-                                           vtrace_drop_last_ts = True,
-                                           grad_clip = 10.0,
-                                           opt_type = "adam",
+                                           vtrace_drop_last_ts = False,
+                                           opt_type = "rmsprop",
                                            entropy_coeff= 0.001,
                                            vf_loss_coeff = 1.0,
                                            momentum = 0.0,
@@ -102,7 +78,7 @@ if __name__ == "__main__":
     ray.init()
 
     algo = impala_config.build()
-    # algo.restore("D:\modelbackup\checkpoint_000594")
+    # algo.restore("D:\checkpoint\checkpoint_000568")
     # policy = trainer.get_policy()
     last_time = time.time()
     # algo.save("/checkpoint/init")

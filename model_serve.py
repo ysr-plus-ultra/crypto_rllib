@@ -16,7 +16,7 @@ os.environ["CUBLAS_WORKSPACE_CONFIG"]=":4096:2"
 torch.backends.cudnn.benchmark = True
 ModelCatalog.register_custom_model("my_torch_model", CustomRNNModel)
 _action_space = Discrete(3)
-_observation_space = Box(-np.inf, np.inf, shape=(7,), dtype=np.float32)
+_observation_space = Box(-np.inf, np.inf, shape=(13,), dtype=np.float32)
 class NumpyArrayEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, np.ndarray):
@@ -86,4 +86,4 @@ class ServeModel:
 if __name__ == "__main__":
     ray.init(address="auto", namespace="serve")
     serve.start(detached=True)
-    ServeModel.deploy("D:\modelbackup\checkpoint_001213")
+    ServeModel.deploy("D:\modelbackup\checkpoint_002268")
