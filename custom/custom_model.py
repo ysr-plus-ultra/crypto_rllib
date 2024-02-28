@@ -1,6 +1,6 @@
 import numpy as np
-import gym
-from gym.spaces import Discrete, MultiDiscrete
+import gymnasium as gym
+from gymnasium.spaces import Discrete, MultiDiscrete
 import tree  # pip install dm_tree
 from typing import Dict, List, Union
 
@@ -32,8 +32,8 @@ class CustomRNNModel(TorchRNN, nn.Module):
         num_outputs,
         model_config,
         name,
-        fc_size=6,
-        lstm_size=4,
+        fc_size=4,
+        lstm_size=128,
     ):
         nn.Module.__init__(self)
         super().__init__(obs_space,
@@ -62,10 +62,8 @@ class CustomRNNModel(TorchRNN, nn.Module):
             else:
                 self.action_dim += int(len(space))
 
-        self.fc1 = nn.Linear(self.obs_size, self.fc_size, bias=False)
+        self.fc1 = nn.Linear(self.obs_size, self.fc_size)
         self.ln1 = nn.LayerNorm(self.fc_size)
-        self.fc2 = nn.Linear(self.fc_size, self.fc_size, bias=False)
-        self.ln2 = nn.LayerNorm(self.fc_size)
 
         self.activation = nn.SiLU()
 
@@ -74,19 +72,21 @@ class CustomRNNModel(TorchRNN, nn.Module):
         if self.use_prev_reward:
             self.fc_size += 1
 
-        # self.rnn = nn.LSTM(self.fc_size, self.cell_size, batch_first=True)
-        self.rnn = rnnlib.LayerNormLSTM(self.fc_size, self.cell_size, batch_first=True)
+        self.rnn = nn.GRU(self.fc_size, self.cell_size, batch_first=True)
+        # self.rnn = rnnlib.LayerNormLSTM(self.fc_size, self.cell_size, batch_first=True)
         self._logits_branch = nn.Linear(self.cell_size, num_outputs)
         self._value_branch = nn.Linear(self.cell_size, 1)
 
 
         self.mu = nn.Parameter(torch.tensor(0.0), requires_grad=False)
-        self.nu = nn.Parameter(torch.tensor(1e-1), requires_grad=False)
-        self.sigma = nn.Parameter(torch.tensor(1e-1), requires_grad=False)
+        self.nu = nn.Parameter(torch.tensor(1.0), requires_grad=False)
+        self.sigma = nn.Parameter(torch.tensor(1.0), requires_grad=False)
 
         self.new_mu = nn.Parameter(torch.tensor(0.0), requires_grad=False)
-        self.new_nu = nn.Parameter(torch.tensor(1e-1), requires_grad=False)
+        self.new_nu = nn.Parameter(torch.tensor(1.0), requires_grad=False)
 
+        self.alpha = nn.Parameter(torch.tensor(1.0))
+        self.beta = nn.Parameter(torch.tensor(0.0))
 
         if model_config["lstm_use_prev_action"]:
             self.view_requirements[SampleBatch.PREV_ACTIONS] = ViewRequirement(
@@ -98,19 +98,22 @@ class CustomRNNModel(TorchRNN, nn.Module):
             )
         self._features = None
 
+    @override(ModelV2)
     def value_function(self):
         assert self._features is not None, "must call forward() first"
-        # normalized_output = torch.nn.functional.linear(self._features,
-        #                                                self._value_branch.weight
-        #                                                 + (self.weight_sigma*torch.randn_like(self._value_branch.weight)),
-        #                                                self._value_branch.bias
-        #                                                 + (self.bias_sigma*torch.randn_like(self._value_branch.bias)))
         normalized_output = self._value_branch(self._features)
 
         with torch.no_grad():
             value_output = normalized_output * self.sigma + self.mu
 
-        return torch.reshape(value_output, [-1]), torch.reshape(normalized_output, [-1])
+        return torch.reshape(value_output, [-1])
+
+
+    def normalized_value_function(self):
+        assert self._features is not None, "must call forward() first"
+        normalized_output = self._value_branch(self._features)
+
+        return torch.reshape(normalized_output, [-1])
 
     def update_popart(self, beta):
         with torch.no_grad():
@@ -139,10 +142,9 @@ class CustomRNNModel(TorchRNN, nn.Module):
         net = self.fc1(float_input)
         net = self.ln1(net)
         net = self.activation(net)
-        net = self.fc2(net)
-        net = self.ln2(net)
-        net = self.activation(net)
+
         wrapped_out = net
+
         # wrapped_out = float_input
 
         # Concat. prev-action/reward if required.
@@ -192,13 +194,26 @@ class CustomRNNModel(TorchRNN, nn.Module):
 
         return output, new_state
 
+    # @override(TorchRNN)
+    # def forward_rnn(
+    #     self, inputs: TensorType, state: List[TensorType], seq_lens: TensorType
+    # ) -> (TensorType, List[TensorType]):
+    #
+    #     self._features, [h, c] = self.rnn(
+    #         inputs, [torch.unsqueeze(state[0], 0), torch.unsqueeze(state[1], 0)]
+    #     )
+    #     model_out = self._logits_branch(self._features)
+    #     return model_out, [torch.squeeze(h, 0), torch.squeeze(c, 0)]
+
+
     @override(TorchRNN)
     def forward_rnn(
         self, inputs: TensorType, state: List[TensorType], seq_lens: TensorType
     ) -> (TensorType, List[TensorType]):
+        c = torch.unsqueeze(state[1], 0)
 
-        self._features, [h, c] = self.rnn(
-            inputs, [torch.unsqueeze(state[0], 0), torch.unsqueeze(state[1], 0)]
+        self._features, h = self.rnn(
+            inputs, torch.unsqueeze(state[0], 0)
         )
 
         model_out = self._logits_branch(self._features)

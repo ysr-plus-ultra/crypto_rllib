@@ -1,9 +1,11 @@
-import gym
+import gymnasium as gym
 import logging
 import numpy as np
-from typing import Dict, List, Type, Union
+from typing import Dict, List, Optional, Type, Union
 
 import ray
+from ray.rllib.evaluation.episode import Episode
+from ray.rllib.evaluation.postprocessing import compute_bootstrap_value
 from ray.rllib.models.modelv2 import ModelV2
 from ray.rllib.models.action_dist import ActionDistribution
 from ray.rllib.models.torch.torch_action_dist import TorchCategorical
@@ -11,6 +13,7 @@ from ray.rllib.policy.sample_batch import SampleBatch
 from ray.rllib.policy.torch_mixins import (
     EntropyCoeffSchedule,
     LearningRateSchedule,
+    ValueNetworkMixin,
 )
 from ray.rllib.policy.torch_policy_v2 import TorchPolicyV2
 from ray.rllib.utils.annotations import override
@@ -21,14 +24,8 @@ from ray.rllib.utils.torch_utils import (
     explained_variance,
     global_norm,
     sequence_mask,
-    one_hot
 )
-from ray.rllib.utils.typing import (
-    TensorType,
-    ModelGradients,
-    )
-from ray.rllib.policy.torch_policy import _directStepOptimizerSingleton
-import impala_custom
+from ray.rllib.utils.typing import TensorType
 
 torch, nn = try_import_torch()
 
@@ -96,7 +93,6 @@ class VTraceLoss:
 
         # Compute vtrace on the CPU for better perf
         # (devices handled inside `vtrace.multi_from_logits`).
-
         device = behaviour_action_logp[0].device
         self.vtrace_returns = vtrace.multi_from_logits(
             behaviour_action_log_probs=behaviour_action_logp,
@@ -112,11 +108,11 @@ class VTraceLoss:
             clip_rho_threshold=clip_rho_threshold,
             clip_pg_rho_threshold=clip_pg_rho_threshold,
         )
-        # Move v-trace results back to GPU for actual loss computing.
 
         def valid_mean(value, valid_mask):
             return torch.sum(value * valid_mask) / torch.sum(valid_mask)
         step_count = torch.sum(valid_mask)
+
         with torch.no_grad():
             old_mu = model.mu
             old_sigma = model.sigma
@@ -142,16 +138,15 @@ class VTraceLoss:
 
         self.pi_loss = -torch.sum(
             actions_logp * pg_advantage * valid_mask
-        )
+        ) / step_count
 
         # The baseline loss.
-        delta = (normalized_G_t_vtrace - normalized_values)
-
-        self.vf_loss = 0.5 * torch.sum(torch.pow(delta, 2.0) * valid_mask)
+        delta = (normalized_values - normalized_G_t_vtrace)
+        self.vf_loss = 0.5 * torch.sum(torch.pow(delta, 2.0) * valid_mask) / step_count
 
         # The entropy loss.
-        self.entropy = torch.sum(actions_entropy * valid_mask)
-        self.mean_entropy = self.entropy / step_count
+        self.entropy = torch.sum(actions_entropy * valid_mask) / step_count
+        self.mean_entropy = self.entropy
 
         # # The summed weighted loss.
         self.total_loss = (
@@ -159,22 +154,21 @@ class VTraceLoss:
                 - self.entropy * entropy_coeff
         )
 
-def make_time_major(policy, seq_lens, tensor, drop_last=False):
+
+def make_time_major(policy, seq_lens, tensor):
     """Swaps batch and trajectory axis.
 
     Args:
         policy: Policy reference
         seq_lens: Sequence lengths if recurrent or None
         tensor: A tensor or list of tensors to reshape.
-        drop_last: A bool indicating whether to drop the last
-        trajectory item.
 
     Returns:
         res: A tensor with swapped axes or a list of tensors with
         swapped axes.
     """
     if isinstance(tensor, (list, tuple)):
-        return [make_time_major(policy, seq_lens, t, drop_last) for t in tensor]
+        return [make_time_major(policy, seq_lens, t) for t in tensor]
 
     if policy.is_recurrent():
         B = seq_lens.shape[0]
@@ -191,8 +185,6 @@ def make_time_major(policy, seq_lens, tensor, drop_last=False):
     # Swap B and T axes.
     res = torch.transpose(rs, 1, 0)
 
-    if drop_last:
-        return res[:-1]
     return res
 
 
@@ -225,22 +217,28 @@ class ImpalaTorchPolicyCustom(
     VTraceOptimizer,
     LearningRateSchedule,
     EntropyCoeffSchedule,
+    ValueNetworkMixin,
     TorchPolicyV2,
 ):
     """PyTorch policy class used with Impala."""
 
     def __init__(self, observation_space, action_space, config):
         config = dict(
-            impala_custom.ImpalaConfig().to_dict(), **config
+            ray.rllib.algorithms.impala.impala.ImpalaConfig().to_dict(), **config
         )
 
-        VTraceOptimizer.__init__(self)
-        # Need to initialize learning rate variable before calling
-        # TorchPolicyV2.__init__.
-        LearningRateSchedule.__init__(self, config["lr"], config["lr_schedule"])
-        EntropyCoeffSchedule.__init__(
-            self, config["entropy_coeff"], config["entropy_coeff_schedule"]
-        )
+        # If Learner API is used, we don't need any loss-specific mixins.
+        # However, we also would like to avoid creating special Policy-subclasses
+        # for this as the entire Policy concept will soon not be used anymore with
+        # the new Learner- and RLModule APIs.
+        if not config.get("_enable_learner_api"):
+            VTraceOptimizer.__init__(self)
+            # Need to initialize learning rate variable before calling
+            # TorchPolicyV2.__init__.
+            LearningRateSchedule.__init__(self, config["lr"], config["lr_schedule"])
+            EntropyCoeffSchedule.__init__(
+                self, config["entropy_coeff"], config["entropy_coeff_schedule"]
+            )
 
         TorchPolicyV2.__init__(
             self,
@@ -250,7 +248,8 @@ class ImpalaTorchPolicyCustom(
             max_seq_len=config["model"]["max_seq_len"],
         )
 
-        # TODO: Don't require users to call this manually.
+        ValueNetworkMixin.__init__(self, config)
+
         self._initialize_loss_from_dummy_batch()
 
     @override(TorchPolicyV2)
@@ -259,9 +258,10 @@ class ImpalaTorchPolicyCustom(
         model: ModelV2,
         dist_class: Type[ActionDistribution],
         train_batch: SampleBatch,
-                                ) -> Union[TensorType, List[TensorType]]:
+    ) -> Union[TensorType, List[TensorType]]:
 
-        _mu, _sigma = model.update_popart(3e-4)
+        _ = model.update_popart(1e-3)
+
         model_out, _ = model(train_batch)
         action_dist = dist_class(model_out, model)
 
@@ -281,7 +281,7 @@ class ImpalaTorchPolicyCustom(
             )
 
         actions = train_batch[SampleBatch.ACTIONS]
-        dones = train_batch[SampleBatch.DONES]
+        dones = train_batch[SampleBatch.TERMINATEDS]
         rewards = train_batch[SampleBatch.REWARDS]
         behaviour_action_logp = train_batch[SampleBatch.ACTION_LOGP]
         behaviour_logits = train_batch[SampleBatch.ACTION_DIST_INPUTS]
@@ -296,7 +296,17 @@ class ImpalaTorchPolicyCustom(
             )
             unpacked_outputs = torch.chunk(model_out, output_hidden_shape, dim=1)
 
-        values, normalized_values = model.value_function()
+        values = model.value_function()
+        values_time_major = _make_time_major(values)
+
+        normalized_values = model.normalized_value_function()
+        normalized_values_time_major = _make_time_major(normalized_values)
+
+        bootstrap_values_time_major = _make_time_major(
+            train_batch[SampleBatch.VALUES_BOOTSTRAPPED]
+        )
+        bootstrap_value = bootstrap_values_time_major[-1]
+
         if self.is_recurrent():
             max_seq_len = torch.max(train_batch[SampleBatch.SEQ_LENS])
             mask_orig = sequence_mask(train_batch[SampleBatch.SEQ_LENS], max_seq_len)
@@ -308,37 +318,29 @@ class ImpalaTorchPolicyCustom(
         loss_actions = actions if is_multidiscrete else torch.unsqueeze(actions, dim=1)
 
         # Inputs are reshaped from [B * T] => [(T|T-1), B] for V-trace calc.
-        drop_last = self.config["vtrace_drop_last_ts"]
         loss = VTraceLoss(
-            actions=_make_time_major(loss_actions, drop_last=drop_last),
-            actions_logp=_make_time_major(
-                action_dist.logp(actions), drop_last=drop_last
-            ),
-            actions_entropy=_make_time_major(
-                action_dist.entropy(), drop_last=drop_last
-            ),
-            dones=_make_time_major(dones, drop_last=drop_last),
-            behaviour_action_logp=_make_time_major(
-                behaviour_action_logp, drop_last=drop_last
-            ),
-            behaviour_logits=_make_time_major(
-                unpacked_behaviour_logits, drop_last=drop_last
-            ),
-            target_logits=_make_time_major(unpacked_outputs, drop_last=drop_last),
+            actions=_make_time_major(loss_actions),
+            actions_logp=_make_time_major(action_dist.logp(actions)),
+            actions_entropy=_make_time_major(action_dist.entropy()),
+            dones=_make_time_major(dones),
+            behaviour_action_logp=_make_time_major(behaviour_action_logp),
+            behaviour_logits=_make_time_major(unpacked_behaviour_logits),
+            target_logits=_make_time_major(unpacked_outputs),
             discount=self.config["gamma"],
-            rewards=_make_time_major(rewards, drop_last=drop_last),
-            values=_make_time_major(values, drop_last=drop_last),
-            normalized_values=_make_time_major(normalized_values, drop_last=drop_last),
-            bootstrap_value=_make_time_major(values)[-1],
+            rewards=_make_time_major(rewards),
+            values=values_time_major,
+            normalized_values=normalized_values_time_major,
+            bootstrap_value=bootstrap_value,
             dist_class=TorchCategorical if is_multidiscrete else dist_class,
             model=model,
-            valid_mask=_make_time_major(mask, drop_last=drop_last),
+            valid_mask=_make_time_major(mask),
             config=self.config,
             vf_loss_coeff=self.config["vf_loss_coeff"],
             entropy_coeff=self.entropy_coeff,
             clip_rho_threshold=self.config["vtrace_clip_rho_threshold"],
             clip_pg_rho_threshold=self.config["vtrace_clip_pg_rho_threshold"],
         )
+
         # Store values for stats function in model (tower), such that for
         # multi-GPU, we do not override them during the parallel loss phase.
         model.tower_stats["pi_loss"] = loss.pi_loss
@@ -351,11 +353,11 @@ class ImpalaTorchPolicyCustom(
             self,
             train_batch.get(SampleBatch.SEQ_LENS),
             values,
-            drop_last=self.config["vtrace"] and drop_last,
         )
         model.tower_stats["vf_explained_var"] = explained_variance(
             torch.reshape(loss.value_targets, [-1]), torch.reshape(values_batched, [-1])
         )
+
         return loss.total_loss
 
     @override(TorchPolicyV2)
@@ -384,6 +386,25 @@ class ImpalaTorchPolicyCustom(
 
             }
         )
+
+    @override(TorchPolicyV2)
+    def postprocess_trajectory(
+        self,
+        sample_batch: SampleBatch,
+        other_agent_batches: Optional[SampleBatch] = None,
+        episode: Optional["Episode"] = None,
+    ):
+        # Call super's postprocess_trajectory first.
+        # sample_batch = super().postprocess_trajectory(
+        #    sample_batch, other_agent_batches, episode
+        # )
+
+        if self.config["vtrace"]:
+            # Add the SampleBatch.VALUES_BOOTSTRAPPED column, which we'll need
+            # inside the loss for vtrace calculations.
+            sample_batch = compute_bootstrap_value(sample_batch, self)
+
+        return sample_batch
 
     @override(TorchPolicyV2)
     def extra_grad_process(

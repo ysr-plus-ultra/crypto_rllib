@@ -1,14 +1,15 @@
 import ray
 
-from impala_custom import ImpalaConfig
+from custom.impala_custom import ImpalaConfig
 from ray import serve
 from ray.rllib.models import ModelCatalog
-from custom_model import CustomRNNModel
+from custom.custom_model import CustomRNNModel
 from starlette.requests import Request
 from ray.rllib.utils.framework import try_import_torch
 torch, nn = try_import_torch()
 import numpy as np
-from gym.spaces import Discrete, Box
+import gymnasium as gym
+from gymnasium.spaces import Discrete, Box
 import os
 import zlib, json, base64
 ZIPJSON_KEY = 'base64(zip(o))'
@@ -16,7 +17,7 @@ os.environ["CUBLAS_WORKSPACE_CONFIG"]=":4096:2"
 torch.backends.cudnn.benchmark = True
 ModelCatalog.register_custom_model("my_torch_model", CustomRNNModel)
 _action_space = Discrete(3)
-_observation_space = Box(-np.inf, np.inf, shape=(13,), dtype=np.float32)
+_observation_space = Box(-np.inf, np.inf, shape=(7,), dtype=np.float32)
 class NumpyArrayEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, np.ndarray):
@@ -42,7 +43,7 @@ class ServeModel:
     def __init__(self, checkpoint_path):
         try:
             impala_config = ImpalaConfig()
-            impala_config = impala_config.training(gamma=0.99, lr=0.001, train_batch_size=500,
+            impala_config = impala_config.training(gamma=0.0, lr=0.001, train_batch_size=500,
                                                    model={
                                                        "custom_model": "my_torch_model",
                                                        "lstm_use_prev_action": True,
@@ -79,11 +80,16 @@ class ServeModel:
             prev_action_batch=prev_a,
             prev_reward_batch=prev_r)
 
-        value, normal = self._policy.model.value_function()
+        value = self._policy.model.value_function()
+        normal = self._policy.model.normalized_value_function()
         compressed_output = json_zip({"action": action, "state_h": state_out[0], "state_c": state_out[1], "value": value.to('cpu').detach().numpy() })
         return compressed_output
 
 if __name__ == "__main__":
-    ray.init(address="auto", namespace="serve")
-    serve.start(detached=True)
-    ServeModel.deploy("D:\modelbackup\checkpoint_002268")
+    try:
+        ray.init(address="auto", namespace="serve")
+        serve.start(detached=True)
+        impala_model = ServeModel.bind("D:\checkpoint\model_20240219")
+        serve.run(impala_model)
+    finally:
+        ray.shutdown()
