@@ -15,8 +15,7 @@ env_cfg = {
 
     "FEE": 0.07,
     "MAX_EP": 43200,
-    "DF_SIZE": 1038240,  #
-    # "DF_SIZE": 131040,  #
+    "DF_SIZE": 1038240,
 
     "frameskip": 60,
     "mode": "train",
