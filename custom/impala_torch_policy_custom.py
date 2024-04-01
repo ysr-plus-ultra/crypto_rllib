@@ -111,7 +111,6 @@ class VTraceLoss:
 
         def valid_mean(value, valid_mask):
             return torch.sum(value * valid_mask) / torch.sum(valid_mask)
-        step_count = torch.sum(valid_mask)
 
         with torch.no_grad():
             old_mu = model.mu
@@ -124,12 +123,16 @@ class VTraceLoss:
 
             new_mu = valid_mean(G_value, valid_mask)
             new_nu = valid_mean(torch.pow(G_value, 2), valid_mask)
+            new_xi = valid_mean(torch.pow(G_value, 3), valid_mask)
+            new_omicron = valid_mean(torch.pow(G_value, 4), valid_mask)
 
             model.new_mu.copy_(new_mu)
             model.new_nu.copy_(new_nu)
+            model.new_xi.copy_(new_xi)
+            model.new_omicron.copy_(new_omicron)
 
-            normalized_G_t_vtrace = ((G_value - old_mu) / old_sigma) * valid_mask
-            normalized_G_t_pi = ((G_pg - old_mu) / old_sigma) * valid_mask
+            normalized_G_t_vtrace = (G_value - old_mu) / old_sigma
+            normalized_G_t_pi = (G_pg - old_mu) / old_sigma
 
             pg_advantage = self.vtrace_returns.clipped_pg_rhos.to(device) * (normalized_G_t_pi - normalized_values)
 
@@ -137,15 +140,15 @@ class VTraceLoss:
         # The policy gradients loss.
 
         self.pi_loss = -torch.sum(
-            actions_logp * pg_advantage * valid_mask
-        ) / step_count
+            actions_logp * pg_advantage.to(device) * valid_mask
+        ) / torch.sum(valid_mask)
 
         # The baseline loss.
-        delta = (normalized_values - normalized_G_t_vtrace)
-        self.vf_loss = 0.5 * torch.sum(torch.pow(delta, 2.0) * valid_mask) / step_count
+        delta = (normalized_G_t_vtrace - normalized_values)
+        self.vf_loss = 0.5 * torch.sum(torch.pow(delta, 2.0) * valid_mask) / torch.sum(valid_mask)
 
         # The entropy loss.
-        self.entropy = torch.sum(actions_entropy * valid_mask) / step_count
+        self.entropy = torch.sum(actions_entropy * valid_mask) / torch.sum(valid_mask)
         self.mean_entropy = self.entropy
 
         # # The summed weighted loss.
@@ -259,8 +262,7 @@ class ImpalaTorchPolicyCustom(
         dist_class: Type[ActionDistribution],
         train_batch: SampleBatch,
     ) -> Union[TensorType, List[TensorType]]:
-
-        _ = model.update_popart(1e-3)
+        _ = model.update_popart()
 
         model_out, _ = model(train_batch)
         action_dist = dist_class(model_out, model)
@@ -381,8 +383,10 @@ class ImpalaTorchPolicyCustom(
                 "vf_explained_var": torch.mean(
                     torch.stack(self.get_tower_stats("vf_explained_var"))
                 ),
-                "mu": self.model.mu,
-                "sigma": self.model.sigma,
+                "stat_1_mu": self.model.mu,
+                "stat_2_sigma": self.model.sigma,
+                "stat_3_skewness": self.model.skewness,
+                "stat_4_kurtosis": self.model.kurtosis
 
             }
         )

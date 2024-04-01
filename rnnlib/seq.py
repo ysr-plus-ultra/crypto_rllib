@@ -2,7 +2,7 @@
 import torch.nn as nn
 import torch
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
-
+import math
 from .common import no_dropout, no_layer_norm, get_indicator, get_module_device
 
 
@@ -265,6 +265,7 @@ class LayerNormRNNCell(nn.Module):
         self.hidden_size = hidden_size
         self.linear = nn.Linear(
             input_size + hidden_size, hidden_size, bias=not layer_norm_enabled)
+        self.activation = torch.nn.SiLU()
 
         # if dropout is not None:
         #     if isinstance(dropout, nn.Dropout):
@@ -287,7 +288,8 @@ class LayerNormRNNCell(nn.Module):
                       ex. (h_0, c_0)
         :returns: hidden and cell
         """
-        return torch.tanh(self.layer_norm(self.linear(
+
+        return self.activation(self.layer_norm(self.linear(
             torch.cat([input, hidden], dim=1))))
 
 
@@ -390,6 +392,121 @@ class LayerNormLSTM(LSTMFrame):
             for layer_idx in range(num_layers))
 
         super().__init__(rnn_cells=rnn_cells, dropout=dropout,
+                         batch_first=batch_first, bidirectional=bidirectional)
+
+
+def forward_rnn(rnn, init_state, input, lengths, batch_first=False,
+                embedding: torch.nn.Embedding = None,
+                dropout: torch.nn.Dropout = None,
+                return_packed_output=False):
+    # "batch_first" means whether "input" is a batch-first tensor
+    padded = pad_sequence(input, batch_first=batch_first)
+    if embedding is not None:
+        padded = embedding(padded)
+    if dropout is not None:
+        padded = dropout(padded)
+    packed = pack_padded_sequence(padded, lengths, batch_first=batch_first, enforce_sorted=False)
+    packed_output, last_state = rnn(packed, init_state)
+    # (ht, ct) = last_state  # when rnn is a lstm
+    if return_packed_output:
+        return packed_output, last_state
+    else:
+        output, lengths2 = pad_packed_sequence(packed_output, batch_first=batch_first)
+        return output, last_state
+
+# class LayerNormGRUCell(nn.Module):
+#     """
+#     It's based on tf.contrib.rnn.LayerNormBasicLSTMCell
+#     Reference:
+#     - https://www.tensorflow.org/api_docs/python/tf/contrib/rnn/LayerNormBasicLSTMCell
+#     - https://github.com/tensorflow/tensorflow/blob/r1.12/tensorflow/contrib/rnn/python/ops/rnn_cell.py#L1335
+#     """
+#
+#     def __init__(self, input_size, hidden_size, dropout=None, layer_norm_enabled=True, cell_ln=None):
+#         super().__init__()
+#         self.input_size = input_size
+#         self.hidden_size = hidden_size
+#         self.zr_linear = nn.Linear(
+#             input_size + hidden_size, hidden_size * 2, bias=not layer_norm_enabled)
+#
+#         if dropout is not None:
+#             # recurrent dropout is applied
+#             if isinstance(dropout, nn.Dropout):
+#                 self.dropout = dropout
+#             elif dropout > 0:
+#                 self.dropout = nn.Dropout(dropout)
+#             else:
+#                 assert dropout >= 0
+#                 self.dropout = no_dropout
+#         else:
+#             self.dropout = no_dropout
+#
+#         self.layer_norm_enabled = layer_norm_enabled
+#         if layer_norm_enabled:
+#             self.zr_ln_layers = nn.ModuleList(
+#                 nn.LayerNorm(hidden_size) for _ in range(2))
+#             # self.fiou_ln_layers = nn.ModuleList(
+#             #     nn.LayerNorm(hidden_size) for _ in range(3))
+#             # self.fiou_ln_layers.append(
+#             #     nn.LayerNorm(hidden_size) if u_ln is None else u_ln)
+#             self.cell_ln = nn.LayerNorm(
+#                 hidden_size) if cell_ln is None else cell_ln
+#         else:
+#             assert cell_ln is None
+#             # assert u_ln is cell_ln is None
+#             self.zr_ln_layers = (no_layer_norm,) * 2
+#             self.cell_ln = no_layer_norm
+#         # self.reset_parameters()
+#
+#     # def reset_parameters(self):
+#     #     stdv = 1.0 / math.sqrt(self.hidden_size)
+#     #     for weight in self.parameters():
+#     #         weight.data.uniform_(-stdv, stdv)
+#
+#     def forward(self, input, state):
+#         """
+#         :param input: a tensor of of shape (batch_size, input_size)
+#         :param state: a pair of a hidden tensor and a cell tensor whose shape is (batch_size, hidden_size).
+#                       ex. (h_0, c_0)
+#         :returns: hidden and cell
+#         """
+#         hidden_tensor, cell_tensor = state
+#
+#         zr_linear = self.zr_linear(
+#             torch.cat([input, hidden_tensor], dim=1))
+#         zr_linear_tensors = zr_linear.split(self.hidden_size, dim=1)
+#
+#         # if self.layer_norm_enabled:
+#         zr_linear_tensors = tuple(ln(tensor) for ln, tensor in zip(
+#             self.zr_ln_layers, zr_linear_tensors))
+#
+#         f, i, o = tuple(torch.sigmoid(tensor)
+#                         for tensor in zr_linear_tensors[:3])
+#         u = self.dropout(torch.tanh(zr_linear_tensors[3]))
+#
+#         new_cell = self.cell_ln(i * u + (f * cell_tensor))
+#         new_h = o * torch.tanh(new_cell)
+#
+#         return new_h, new_cell
+#
+class LayerNormRNN(RNNFrame):
+    def __init__(self, input_size, hidden_size, num_layers=1, batch_first=False, bidirectional=False, layer_norm_enabled=True):
+
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.batch_first = batch_first
+        self.bidirectional = bidirectional
+        self.layer_norm_enabled = layer_norm_enabled
+        rnn_cells = tuple(
+            tuple(
+                LayerNormRNNCell(
+                    input_size if layer_idx == 0 else hidden_size * (2 if bidirectional else 1),
+                    hidden_size,
+                    layer_norm_enabled=layer_norm_enabled)
+                for _ in range(2 if bidirectional else 1))
+            for layer_idx in range(num_layers))
+
+        super().__init__(rnn_cells=rnn_cells,
                          batch_first=batch_first, bidirectional=bidirectional)
 
 
