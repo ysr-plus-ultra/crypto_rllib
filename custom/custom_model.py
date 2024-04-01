@@ -32,7 +32,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
         model_config,
         name,
         fc_size=4,
-        lstm_size=256,
+        lstm_size=512,
     ):
         nn.Module.__init__(self)
         super().__init__(obs_space,
@@ -51,7 +51,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
         self.action_space_struct = get_base_struct_from_space(self.action_space)
         self.action_dim = 0
 
-        self.popart_beta = 1e-2
+        self.popart_beta = 1e-3
         self.count = 1
 
         for space in tree.flatten(self.action_space_struct):
@@ -77,12 +77,6 @@ class CustomRNNModel(TorchRNN, nn.Module):
 
         self.fc2 = nn.Linear(self.fc_size, self.fc_size, bias = False)
         self.ln2 = nn.LayerNorm(self.fc_size)
-
-        self.fc3 = nn.Linear(self.fc_size, self.fc_size, bias = False)
-        self.ln3 = nn.LayerNorm(self.fc_size)
-
-        self.fc4 = nn.Linear(self.fc_size, self.fc_size, bias = False)
-        self.ln4 = nn.LayerNorm(self.fc_size)
 
         self.activation = nn.SiLU()
 
@@ -228,14 +222,6 @@ class CustomRNNModel(TorchRNN, nn.Module):
 
         wrapped_out = self.fc2(wrapped_out)
         wrapped_out = self.ln2(wrapped_out)
-        wrapped_out = self.activation(wrapped_out)
-
-        wrapped_out = self.fc3(wrapped_out)
-        wrapped_out = self.ln3(wrapped_out)
-        wrapped_out = self.activation(wrapped_out)
-
-        wrapped_out = self.fc4(wrapped_out)
-        wrapped_out = self.ln4(wrapped_out)
         wrapped_out = self.activation(wrapped_out)
 
         if isinstance(seq_lens, np.ndarray):
