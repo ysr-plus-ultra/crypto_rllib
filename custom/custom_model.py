@@ -32,7 +32,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
         model_config,
         name,
         fc_size=4,
-        lstm_size=512,
+        lstm_size=256,
     ):
         nn.Module.__init__(self)
         super().__init__(obs_space,
@@ -86,10 +86,10 @@ class CustomRNNModel(TorchRNN, nn.Module):
 
         self.activation = nn.SiLU()
 
-        # self.rnn1 = rnnlib.LayerNormRNN(self.fc_size, self.cell_size, batch_first=True)
+        self.rnn = rnnlib.LayerNormLSTM(self.fc_size, self.cell_size, batch_first=True)
         # self.rnn2 = rnnlib.LayerNormRNN(self.cell_size, self.cell_size, batch_first=True)
-        self.rnn1 = rnnlib.LayerNormLSTM(self.fc_size, self.cell_size, batch_first=True)
-        self.rnn2 = rnnlib.LayerNormLSTM(self.cell_size, self.cell_size, batch_first=True)
+        # self.rnn1 = rnnlib.LayerNormLSTM(self.fc_size, self.cell_size, batch_first=True)
+        # self.rnn2 = rnnlib.LayerNormLSTM(self.cell_size, self.cell_size, batch_first=True)
         # self.rnn = nn.LSTM(self.fc_size, self.cell_size, batch_first=True)
 
         self._logits_branch = nn.Linear(self.cell_size, num_outputs)
@@ -254,42 +254,38 @@ class CustomRNNModel(TorchRNN, nn.Module):
 
         return output, new_state
 
-    @override(TorchRNN)
-    def forward_rnn(
-        self, inputs: TensorType, state: List[TensorType], seq_lens: TensorType
-    ) -> (TensorType, List[TensorType]):
-
-        _h1 = torch.unsqueeze(state[0], 0)
-        _h2 = torch.unsqueeze(state[1], 0)
-        _h3 = torch.unsqueeze(state[2], 0)
-        _h4 = torch.unsqueeze(state[3], 0)
-
-        net, [h1_, h2_] = self.rnn1(inputs, [_h1, _h2])
-        self._features, [h3_, h4_] = self.rnn2(net, [_h3, _h4])
-
-        model_out = self._logits_branch(self._features)
-
-        return model_out, [torch.squeeze(h1_, 0), torch.squeeze(h2_, 0), torch.squeeze(h3_, 0), torch.squeeze(h4_, 0)]
     # @override(TorchRNN)
     # def forward_rnn(
     #     self, inputs: TensorType, state: List[TensorType], seq_lens: TensorType
     # ) -> (TensorType, List[TensorType]):
     #
-    #     self._features, [h, c] = self.rnn(
-    #         inputs, [torch.unsqueeze(state[0], 0), torch.unsqueeze(state[1], 0)]
-    #     )
+    #     _h1 = torch.unsqueeze(state[0], 0)
+    #     _h2 = torch.unsqueeze(state[1], 0)
+    #     _h3 = torch.unsqueeze(state[2], 0)
+    #     _h4 = torch.unsqueeze(state[3], 0)
+    #
+    #     net, [h1_, h2_] = self.rnn1(inputs, [_h1, _h2])
+    #     self._features, [h3_, h4_] = self.rnn2(net, [_h3, _h4])
     #
     #     model_out = self._logits_branch(self._features)
-    #     return model_out, [torch.squeeze(h, 0), torch.squeeze(c, 0)]
+    #
+    #     return model_out, [torch.squeeze(h1_, 0), torch.squeeze(h2_, 0), torch.squeeze(h3_, 0), torch.squeeze(h4_, 0)]
+    @override(TorchRNN)
+    def forward_rnn(
+        self, inputs: TensorType, state: List[TensorType], seq_lens: TensorType
+    ) -> (TensorType, List[TensorType]):
+
+        self._features, [h, c] = self.rnn(
+            inputs, [torch.unsqueeze(state[0], 0), torch.unsqueeze(state[1], 0)]
+        )
+
+        model_out = self._logits_branch(self._features)
+        return model_out, [torch.squeeze(h, 0), torch.squeeze(c, 0)]
     @override(ModelV2)
     def get_initial_state(self) -> List[TensorType]:
         # Place hidden states on same device as model.
         h = [self.fc1.weight.new(
                 1, self.cell_size).zero_().squeeze(0),
-             self.fc1.weight.new(
-                 1, self.cell_size).zero_().squeeze(0),
-             self.fc1.weight.new(
-                 1, self.cell_size).zero_().squeeze(0),
              self.fc1.weight.new(
                  1, self.cell_size).zero_().squeeze(0),
              ]
