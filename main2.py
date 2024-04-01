@@ -18,7 +18,7 @@ env_cfg = {
     "DF_SIZE": 1038240,  #
     # "DF_SIZE": 131040,  #
 
-    "frameskip": 720,
+    "frameskip": 60,
     "mode": "train",
 }
 def env_creator(env_config):
