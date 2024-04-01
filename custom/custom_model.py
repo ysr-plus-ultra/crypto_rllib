@@ -74,13 +74,16 @@ class CustomRNNModel(TorchRNN, nn.Module):
             self.obs_size += 1
 
         self.fc1 = nn.Linear(self.obs_size, self.fc_size)
-        self.ln1 = nn.LayerNorm(self.fc_size)
-        self.fc2 = nn.Linear(self.fc_size, self.fc_size)
+
+        self.fc2 = nn.Linear(self.fc_size, self.fc_size, bias = False)
         self.ln2 = nn.LayerNorm(self.fc_size)
-        self.fc3 = nn.Linear(self.fc_size, self.fc_size)
+
+        self.fc3 = nn.Linear(self.fc_size, self.fc_size, bias = False)
         self.ln3 = nn.LayerNorm(self.fc_size)
-        self.fc4 = nn.Linear(self.fc_size, self.fc_size)
+
+        self.fc4 = nn.Linear(self.fc_size, self.fc_size, bias = False)
         self.ln4 = nn.LayerNorm(self.fc_size)
+
         self.activation = nn.SiLU()
 
         # self.rnn1 = rnnlib.LayerNormRNN(self.fc_size, self.cell_size, batch_first=True)
@@ -220,7 +223,6 @@ class CustomRNNModel(TorchRNN, nn.Module):
 
         # layer
         wrapped_out = self.fc1(wrapped_out)
-        wrapped_out = self.ln1(wrapped_out)
         wrapped_out = self.activation(wrapped_out)
 
         wrapped_out = self.fc2(wrapped_out)
