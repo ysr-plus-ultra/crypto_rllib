@@ -17,7 +17,7 @@ env_cfg = {
     "MAX_EP": 43200,
     "DF_SIZE": 1038240,
 
-    "frameskip": 90,
+    "frameskip": 60,
     "mode": "train",
 }
 def env_creator(env_config):
@@ -76,12 +76,13 @@ while 1:
     current_time = time.time()
     # print(pprint(result))
     # stop training of the target train steps or reward are reached
-    target_metric = average_weight * target_metric + (1-average_weight) * np.nan_to_num(result["episode_reward_mean"])
-    if (target_metric >= 0.3
-    ):
+    benchmark = result["info"]["learner"]["default_policy"]["learner_stats"]["vf_explained_var"]
+    target_metric = average_weight * target_metric + (1-average_weight) * np.nan_to_num(benchmark)
+    if target_metric > 0.9:
         break
     if result["info"]["learner"]["default_policy"]["learner_stats"]["var_gnorm"] > 1e4:
         break
+
     # if (result["episode_reward_mean"] >= 0 and (current_time-last_time)>300):
     if target_metric > max_metric*1.05:
         algo.save("/checkpoint/model_20240401")

@@ -73,7 +73,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
             self.fc_size += 1
             self.obs_size += 1
 
-        self.fc1 = nn.Linear(self.obs_size, self.fc_size)
+        self.fc1 = nn.Linear(self.obs_size, self.obs_size)
 
         self.fc2 = nn.Linear(self.fc_size, self.fc_size, bias = False)
         self.ln2 = nn.LayerNorm(self.fc_size)
@@ -159,14 +159,9 @@ class CustomRNNModel(TorchRNN, nn.Module):
             moment4 = updated_omicron - 4 * (updated_mu * updated_xi) + 6 * (torch.pow(updated_mu, 2) * updated_nu) - 3 * (torch.pow(updated_mu, 4))
             updated_kurtosis = moment4 / torch.pow(sigma,4)
 
-            old_weight = self._value_branch.weight.clone()
-            old_bias = self._value_branch.bias.clone()
-
-            new_weight = (self.sigma / updated_sigma) * old_weight
-            new_bias = (self.sigma * old_bias + self.mu - updated_mu) / updated_sigma
-
-            self._value_branch.weight.copy_(new_weight)
-            self._value_branch.bias.copy_(new_bias)
+            self._value_branch.weight *= self.sigma / updated_sigma
+            self._value_branch.bias *= self.sigma / updated_sigma
+            self._value_branch.bias += (self.mu - updated_mu) / updated_sigma
 
             self.mu.copy_(updated_mu)
             self.nu.copy_(updated_nu)
