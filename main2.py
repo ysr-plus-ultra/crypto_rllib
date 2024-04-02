@@ -17,7 +17,7 @@ env_cfg = {
     "MAX_EP": 43200,
     "DF_SIZE": 1038240,
 
-    "frameskip": 60,
+    "frameskip": 90,
     "mode": "train",
 }
 def env_creator(env_config):
@@ -56,7 +56,7 @@ config = config.training(gamma=0.5, lr=1e-3, train_batch_size=num_w*num_rollout,
                                            grad_clip=1.0,
                                            grad_clip_by="global_norm",
                                            replay_proportion=1.0,
-                                           replay_buffer_num_slots=8192
+                                           replay_buffer_num_slots=4096
                                            )
 
 config = config.framework(framework="torch")
