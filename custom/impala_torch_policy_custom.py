@@ -86,11 +86,12 @@ class VTraceLoss:
             valid_mask: A bool tensor of valid RNN input elements (#2992).
             config: Algorithm config dict.
         """
+
+
         import ray.rllib.algorithms.impala.vtrace_torch as vtrace
 
         if valid_mask is None:
             valid_mask = torch.ones_like(actions_logp)
-
         # Compute vtrace on the CPU for better perf
         # (devices handled inside `vtrace.multi_from_logits`).
         device = behaviour_action_logp[0].device
@@ -108,7 +109,6 @@ class VTraceLoss:
             clip_rho_threshold=clip_rho_threshold,
             clip_pg_rho_threshold=clip_pg_rho_threshold,
         )
-
         def valid_mean(value, valid_mask):
             return torch.sum(value * valid_mask) / torch.sum(valid_mask)
 
@@ -133,7 +133,7 @@ class VTraceLoss:
 
             normalized_G_t_vtrace = (G_value - old_mu) / old_sigma
             normalized_G_t_pi = (G_pg - old_mu) / old_sigma
-
+            # print(normalized_G_t_pi.shape, self.vtrace_returns.clipped_pg_rhos.shape, normalized_values.shape)
             pg_advantage = self.vtrace_returns.clipped_pg_rhos.to(device) * (normalized_G_t_pi - normalized_values)
 
         self.value_targets = self.vtrace_returns.vs.to(device)
@@ -150,12 +150,11 @@ class VTraceLoss:
         # The entropy loss.
         self.entropy = torch.sum(actions_entropy * valid_mask) / torch.sum(valid_mask)
         self.mean_entropy = self.entropy
-
+        self.pg_loss = self.pi_loss + self.vf_loss * vf_loss_coeff
+        convex_loss = self.pg_loss * (1+torch.pow(model.alpha*torch.exp(model.beta) - 1, 2)) \
+                      + 0.1*torch.pow(model.alpha, 2)
         # # The summed weighted loss.
-        self.total_loss = (
-                self.pi_loss + self.vf_loss * vf_loss_coeff
-                - self.entropy * entropy_coeff
-        )
+        self.total_loss = (convex_loss - self.entropy * entropy_coeff)
 
 
 def make_time_major(policy, seq_lens, tensor):
@@ -183,10 +182,15 @@ def make_time_major(policy, seq_lens, tensor):
         #  batch_mode=complete_episodes.
         T = policy.config["rollout_fragment_length"]
         B = tensor.shape[0] // T
-    rs = torch.reshape(tensor, [B, T] + list(tensor.shape[1:]))
 
+    rs = torch.reshape(tensor, [B, T] + list(tensor.shape[1:]))
     # Swap B and T axes.
     res = torch.transpose(rs, 1, 0)
+
+    # if T != policy.config["rollout_fragment_length"]:
+    #     margin = policy.config["rollout_fragment_length"] - T
+    #     pad = res.new_zeros([margin]+list(res.shape[1:]))
+    #     res = torch.cat([res, pad],0)
 
     return res
 
@@ -316,9 +320,12 @@ class ImpalaTorchPolicyCustom(
         else:
             mask = torch.ones_like(rewards)
 
+        if mask.shape[0] < rewards.shape[0]:
+            margin = rewards.shape[0] - mask.shape[0]
+            pad = mask.new_zeros([margin]+list(mask.shape[1:]))
+            mask = torch.cat([mask, pad],0)
         # Prepare actions for loss.
         loss_actions = actions if is_multidiscrete else torch.unsqueeze(actions, dim=1)
-
         # Inputs are reshaped from [B * T] => [(T|T-1), B] for V-trace calc.
         loss = VTraceLoss(
             actions=_make_time_major(loss_actions),
@@ -386,7 +393,9 @@ class ImpalaTorchPolicyCustom(
                 "stat_1_mu": self.model.mu,
                 "stat_2_sigma": self.model.sigma,
                 "stat_3_skewness": self.model.skewness,
-                "stat_4_kurtosis": self.model.kurtosis
+                "stat_4_kurtosis": self.model.kurtosis,
+                'weight_alpha': self.model.alpha,
+                'weight_beta': self.model.beta
 
             }
         )

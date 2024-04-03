@@ -37,7 +37,7 @@ class CryptoEnv(gym.Env):
             self.vector_env_index = 1
 
         self.cumsum = 0.0
-        self.seed_val = (self.worker_idx - 1) + (self.num_workers * self.vector_env_index)
+        self.seed_val = self.worker_idx + (self.num_workers * self.vector_env_index)
 
         self.mode = config['mode']
         self.client = MongoClient("mongodb://ysr1004:q5n76hrh@192.168.0.10:27017")

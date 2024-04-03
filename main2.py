@@ -17,7 +17,7 @@ env_cfg = {
     "MAX_EP": 43200,
     "DF_SIZE": 1038240,
 
-    "frameskip": 30,
+    "frameskip": 720,
     "mode": "train",
 }
 def env_creator(env_config):
@@ -34,17 +34,19 @@ ray.init(log_to_driver=False)
 
 ModelCatalog.register_custom_model("my_torch_model", CustomRNNModel)
 # model setup end
-num_w = 8
+num_rollout_worker = 8
+num_env = 4
 num_rollout = 32
 config = ImpalaConfig()
 
-config = config.training(gamma=0.5, lr=1e-3, train_batch_size=num_w*num_rollout,
+config = config.training(gamma=0.5, lr=1e-3, train_batch_size=num_rollout_worker*num_rollout,
                                            model={
                                                "custom_model": "my_torch_model",
                                                "lstm_use_prev_action": True,
                                                "lstm_use_prev_reward": True,
                                                "custom_model_config": {
                                                },
+                                               "max_seq_len": num_rollout,
                                            },
                                            vtrace=True,
                                            opt_type="rmsprop",
@@ -55,33 +57,38 @@ config = config.training(gamma=0.5, lr=1e-3, train_batch_size=num_w*num_rollout,
                                            decay=0.0,
                                            grad_clip=1.0,
                                            grad_clip_by="global_norm",
-                                           replay_proportion=1.0,
-                                           replay_buffer_num_slots=4096
                                            )
 
 config = config.framework(framework="torch")
-config = config.resources(num_gpus=1
+config = config.resources(num_gpus=0.5,
+                          num_gpus_per_worker=0.5
                           )
 config = config.environment(env = "my_env", env_config=env_cfg)
 config = config.exploration(exploration_config = {"type": "StochasticSampling"},)
-config = config.rollouts(num_rollout_workers=num_w, num_envs_per_worker=4, rollout_fragment_length=num_rollout)
+config = config.rollouts(num_rollout_workers=num_rollout_worker,
+                         create_env_on_local_worker=False,
+                         num_envs_per_worker=num_env,
+                         remote_worker_envs=False,
+                         rollout_fragment_length=num_rollout)
 algo = config.build()
 # algo.restore("/checkpoint/model_20240326")
 last_time = time.time()
-target_metric = 0.0
+target_metric = -1.0
 average_weight = 0.9
 max_metric = 0.0
 while 1:
     result = algo.train()
     current_time = time.time()
-    # print(pprint(result))
     # stop training of the target train steps or reward are reached
-    benchmark = result["info"]["learner"]["default_policy"]["learner_stats"]["vf_explained_var"]
-    target_metric = average_weight * target_metric + (1-average_weight) * np.nan_to_num(benchmark)
-    if target_metric > 0.9:
-        break
-    if result["info"]["learner"]["default_policy"]["learner_stats"]["var_gnorm"] > 1e4:
-        break
+    try:
+        benchmark = result["info"]["learner"]["default_policy"]["learner_stats"]["vf_explained_var"]
+        target_metric = average_weight * target_metric + (1-average_weight) * np.nan_to_num(benchmark)
+        if target_metric > 0.9:
+            break
+        if result["info"]["learner"]["default_policy"]["learner_stats"]["var_gnorm"] > 1e4:
+            break
+    except:
+        pass
 
     # if (result["episode_reward_mean"] >= 0 and (current_time-last_time)>300):
     if target_metric > max_metric*1.05:
