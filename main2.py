@@ -17,7 +17,7 @@ env_cfg = {
     "MAX_EP": 43200,
     "DF_SIZE": 1038240,
 
-    "frameskip": 60,
+    "frameskip": 30,
     "mode": "train",
 }
 def env_creator(env_config):
@@ -85,7 +85,7 @@ while 1:
 
     # if (result["episode_reward_mean"] >= 0 and (current_time-last_time)>300):
     if target_metric > max_metric*1.05:
-        algo.save("/checkpoint/model_20240401")
+        algo.save("/checkpoint/model_20240402")
         max_metric = target_metric
 
     if (current_time - last_time) > 600:
