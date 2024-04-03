@@ -34,12 +34,12 @@ ray.init(log_to_driver=False)
 
 ModelCatalog.register_custom_model("my_torch_model", CustomRNNModel)
 # model setup end
-num_rollout_worker = 1
-num_env = 32
+num_rollout_worker = 8
+num_env = 4
 num_rollout = 32
 config = ImpalaConfig()
 
-config = config.training(gamma=0.5, lr=1e-3, train_batch_size=256*8//num_rollout_worker,
+config = config.training(gamma=0.5, lr=1e-3, train_batch_size=1024*8//num_rollout_worker,
                                            model={
                                                "custom_model": "my_torch_model",
                                                "lstm_use_prev_action": True,
