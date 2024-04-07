@@ -31,8 +31,8 @@ class CustomRNNModel(TorchRNN, nn.Module):
         num_outputs,
         model_config,
         name,
-        fc_size=4,
-        lstm_size=512,
+        fc_size=8,
+        lstm_size=1024,
     ):
         nn.Module.__init__(self)
         super().__init__(obs_space,
@@ -51,7 +51,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
         self.action_space_struct = get_base_struct_from_space(self.action_space)
         self.action_dim = 0
 
-        self.popart_beta = 1e-3
+        self.popart_beta = 3e-4
         self.count = 1
 
         for space in tree.flatten(self.action_space_struct):
@@ -73,16 +73,16 @@ class CustomRNNModel(TorchRNN, nn.Module):
             self.fc_size += 1
             self.obs_size += 1
 
-        self.fc1 = nn.Linear(self.obs_size, self.obs_size)
+        self.fc1 = nn.Linear(self.obs_size, self.fc_size)
 
-        self.fc2 = nn.Linear(self.fc_size, self.fc_size, bias = False)
-        self.ln2 = nn.LayerNorm(self.fc_size)
+        self.fc2 = nn.Linear(self.fc_size, self.obs_size)
+        self.ln2 = nn.LayerNorm(self.obs_size)
 
         self.activation = nn.SiLU()
 
-        self.rnn = rnnlib.LayerNormLSTM(self.fc_size, self.cell_size, batch_first=True)
+        self.rnn = rnnlib.LayerNormLSTM(self.obs_size, self.cell_size, batch_first=True)
         # self.rnn2 = rnnlib.LayerNormRNN(self.cell_size, self.cell_size, batch_first=True)
-        # self.rnn1 = rnnlib.LayerNormLSTM(self.fc_size, self.cell_size, batch_first=True)
+        # self.rnn1 = rnnlib.LayerNormLSTM(self.obs_size, self.cell_size, batch_first=True)
         # self.rnn2 = rnnlib.LayerNormLSTM(self.cell_size, self.cell_size, batch_first=True)
         # self.rnn = nn.LSTM(self.fc_size, self.cell_size, batch_first=True)
 
@@ -117,9 +117,6 @@ class CustomRNNModel(TorchRNN, nn.Module):
             )
         self._features = None
 
-        with torch.no_grad():
-            self.fc1.weight *= np.sqrt(2)
-
 
     def value_branch(self):
         assert self._features is not None, "must call forward() first"
@@ -143,7 +140,11 @@ class CustomRNNModel(TorchRNN, nn.Module):
 
     def update_popart(self):
         self.count += 1
-        adaptive_beta = self.popart_beta / (1-(1-self.popart_beta)**self.count)
+        if self.count > 10000:
+            adaptive_beta = self.popart_beta
+        else:
+            adaptive_beta = self.popart_beta / (1-(1-self.popart_beta)**self.count)
+
         with torch.no_grad():
             updated_mu = (1 - adaptive_beta) * self.mu + adaptive_beta * self.new_mu
             updated_nu = (1 - adaptive_beta) * self.nu + adaptive_beta * self.new_nu
@@ -212,12 +213,11 @@ class CustomRNNModel(TorchRNN, nn.Module):
             wrapped_out = torch.cat([wrapped_out] + prev_a_r, dim=1)
 
         # layer
-        wrapped_out = self.fc1(wrapped_out)
-        wrapped_out = self.activation(wrapped_out)
+        net = self.fc1(wrapped_out)
+        net = self.activation(net)
+        net = self.fc2(net) + wrapped_out
 
-        wrapped_out = self.fc2(wrapped_out)
-        wrapped_out = self.ln2(wrapped_out)
-        wrapped_out = self.activation(wrapped_out)
+        wrapped_out = self.ln2(net)
 
         if isinstance(seq_lens, np.ndarray):
             seq_lens = torch.Tensor(seq_lens).int()
@@ -262,6 +262,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
 
         model_out = self._logits_branch(self._features)
         return model_out, [torch.squeeze(h, 0), torch.squeeze(c, 0)]
+
     @override(ModelV2)
     def get_initial_state(self) -> List[TensorType]:
         # Place hidden states on same device as model.
@@ -271,3 +272,17 @@ class CustomRNNModel(TorchRNN, nn.Module):
                  1, self.cell_size).zero_().squeeze(0),
              ]
         return h
+    #
+    # @override(ModelV2)
+    # def get_initial_state(self) -> List[TensorType]:
+    #     # Place hidden states on same device as model.
+    #     h = [self.fc1.weight.new(
+    #             1, self.cell_size).zero_().squeeze(0),
+    #          self.fc1.weight.new(
+    #              1, self.cell_size).zero_().squeeze(0),
+    #          self.fc1.weight.new(
+    #              1, self.cell_size).zero_().squeeze(0),
+    #          self.fc1.weight.new(
+    #              1, self.cell_size).zero_().squeeze(0),
+    #          ]
+    #     return h

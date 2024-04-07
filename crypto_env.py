@@ -173,22 +173,24 @@ class CryptoEnv(gym.Env):
 
     def getState(self):
         raw_price = self.df.iloc[self._period0:self._period1][self.columns].values.flatten()
+        log_price = np.log(raw_price)
 
-        _h_idx = np.argmax(raw_price)
-        _l_idx = np.argmin(raw_price)
-        highlow = 0.0
+        _h_idx = np.argmax(log_price)
+        _l_idx = np.argmin(log_price)
+
         if _h_idx <= _l_idx:
-            highlow = np.log(raw_price[_h_idx]) - np.log(raw_price[_l_idx])
+            highlow = raw_price[_h_idx] - raw_price[_l_idx]
         else:
-            highlow = np.log(raw_price[_l_idx]) - np.log(raw_price[_h_idx])
+            highlow = raw_price[_l_idx] - raw_price[_h_idx]
 
-        # log_diff_matrix = np.subtract.outer(log_price_ohlc, log_price_ohlc)
         self.state = np.zeros(self.num_states)
 
-        self.state[0] = np.log(raw_price[-1]) - np.log(raw_price[0])
+        self.state[0] = log_price[-1] - log_price[0]
         self.state[1] = highlow
-        self.state[2] = np.log(raw_price[_h_idx]) - np.log(raw_price[0])
+        self.state[2] = log_price[_h_idx] - log_price[0]
+
         self.state[-1] = self.logfee
+
         # self.state *= np.sqrt(1440/self.frameskip)
         return self.state
 

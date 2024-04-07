@@ -19,7 +19,7 @@ torch.backends.cudnn.benchmark = True
 ModelCatalog.register_custom_model("my_torch_model", CustomRNNModel)
 _action_space = Discrete(3)
 _observation_space = Box(-np.inf, np.inf, shape=(4,), dtype=np.float32)
-_lstm_size = 256
+_lstm_size = 1024
 class NumpyArrayEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, np.ndarray):
@@ -93,7 +93,7 @@ if __name__ == "__main__":
     try:
         ray.init(address="auto", namespace="serve")
         serve.start(detached=True)
-        impala_model = ServeModel.bind("D:\checkpoint\model_20240327")
+        impala_model = ServeModel.bind("D:\checkpoint\model_rnn_1024_tf_60_fee_0_07")
         serve.run(impala_model)
     finally:
         ray.shutdown()

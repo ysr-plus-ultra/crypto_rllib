@@ -17,7 +17,7 @@ env_cfg = {
     "MAX_EP": 43200,
     "DF_SIZE": 1038240,
 
-    "frameskip": 720,
+    "frameskip": 60,
     "mode": "train",
 }
 def env_creator(env_config):
@@ -35,11 +35,11 @@ ray.init(log_to_driver=False)
 ModelCatalog.register_custom_model("my_torch_model", CustomRNNModel)
 # model setup end
 num_rollout_worker = 8
-num_env = 4
+num_env = 16
 num_rollout = 32
 config = ImpalaConfig()
 
-config = config.training(gamma=0.5, lr=1e-3, train_batch_size=1024*8//num_rollout_worker,
+config = config.training(gamma=0.5, lr=1e-3, train_batch_size=32,
                                            model={
                                                "custom_model": "my_torch_model",
                                                "lstm_use_prev_action": True,
@@ -56,7 +56,7 @@ config = config.training(gamma=0.5, lr=1e-3, train_batch_size=1024*8//num_rollou
                                            epsilon=1e-6,
                                            decay=0.0,
                                            grad_clip=1.0,
-                                           grad_clip_by="global_norm",
+                                           grad_clip_by="norm",
                                            )
 
 config = config.framework(framework="torch")
@@ -65,12 +65,11 @@ config = config.resources(num_gpus=0.5,
 config = config.environment(env = "my_env", env_config=env_cfg)
 config = config.exploration(exploration_config = {"type": "StochasticSampling"},)
 config = config.rollouts(num_rollout_workers=num_rollout_worker,
-                         create_env_on_local_worker=False,
+                         create_env_on_local_worker=True,
                          num_envs_per_worker=num_env,
-                         remote_worker_envs=False,
                          rollout_fragment_length=num_rollout)
 algo = config.build()
-# algo.restore("/checkpoint/model_20240326")
+# algo.restore("/checkpoint/model_20240404")
 last_time = time.time()
 target_metric = -1.0
 average_weight = 0.9
@@ -91,11 +90,11 @@ while 1:
 
     # if (result["episode_reward_mean"] >= 0 and (current_time-last_time)>300):
     if target_metric > max_metric*1.05:
-        algo.save("/checkpoint/model_20240402")
+        algo.save("/checkpoint/model_20240405")
         max_metric = target_metric
 
-    if (current_time - last_time) > 600:
-        last_time = current_time
-        print(datetime.fromtimestamp(current_time), "{:.4f}".format(target_metric))
+        if (current_time - last_time) > 600:
+            last_time = current_time
+            print(datetime.fromtimestamp(current_time), "{:.4f}".format(target_metric))
 
 ray.shutdown()
