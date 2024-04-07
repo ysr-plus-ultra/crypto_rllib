@@ -1,82 +1,100 @@
-import os
-os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:2"
-
-from warnings import filterwarnings
-filterwarnings("ignore")
-
-import ray
-from ray.rllib.utils.framework import try_import_torch
-from ray.rllib.models import ModelCatalog
-from custom.custom_model import CustomRNNModel
+import warnings
+import logging
+import numpy as np
+from ray.rllib.utils.replay_buffers.replay_buffer import StorageUnit
 from custom.impala_custom import ImpalaConfig
-from ray import tune
-# from ray.rllib.algorithms.impala import ImpalaConfig
+import time
+from datetime import datetime
+# env setup
+from crypto_env import CryptoEnv
 from ray.tune.registry import register_env
-
+from pprint import pprint
 env_cfg = {
-    "NUM_STATES": 2,
+    "NUM_STATES": 4,
     "NUM_ACTIONS": 3,
 
-    "FEE": 0.06,
-    "MAX_EP": 21600,
-    "DF_SIZE": 864000,  #
+    "FEE": 0.07,
+    "MAX_EP": 10800,
+    "DF_SIZE": 1038240,
 
-    "frameskip": 5,
+    "frameskip": 15,
     "mode": "train",
 }
+def env_creator(env_config):
+    return CryptoEnv(env_config)
+register_env("my_env", env_creator)
 
-from crypto_env import CryptoEnv
+# env setup end
 
-torch, nn = try_import_torch()
-torch.backends.cudnn.benchmark = True
+# model setup
+from custom.custom_model import CustomRNNModel
+from ray.rllib.models import ModelCatalog
+import ray
+ray.init(log_to_driver=False)
 
-if __name__ == "__main__":
-    register_env("my_env", lambda config: CryptoEnv(env_cfg))
-    ModelCatalog.register_custom_model("my_torch_model", CustomRNNModel)
-    impala_config = ImpalaConfig()
-    impala_config = impala_config.training(gamma=0.5, lr=1e-3, train_batch_size=512,
+ModelCatalog.register_custom_model("my_torch_model", CustomRNNModel)
+# model setup end
+num_rollout_worker = 8
+num_env = 16
+num_rollout = 32
+config = ImpalaConfig()
+
+config = config.training(gamma=0.99, lr=1e-3, train_batch_size=32,
                                            model={
                                                "custom_model": "my_torch_model",
                                                "lstm_use_prev_action": True,
-                                               "lstm_use_prev_reward": False,
+                                               "lstm_use_prev_reward": True,
                                                "custom_model_config": {
                                                },
+                                               "max_seq_len": num_rollout,
                                            },
                                            vtrace=True,
                                            opt_type="rmsprop",
-                                           entropy_coeff=0.001,
-                                           vf_loss_coeff=1.0,
+                                           entropy_coeff=0.01,
+                                           vf_loss_coeff=0.5,
                                            momentum=0.0,
-                                           epsilon=1e-08,
+                                           epsilon=1e-6,
                                            decay=0.0,
-                                           grad_clip=0.0,
-                                           ) \
-        .framework(framework="torch") \
-        .environment(env="my_env", env_config=env_cfg, disable_env_checking=True) \
-        .rollouts(num_rollout_workers=2, num_envs_per_worker=2, rollout_fragment_length=64) \
-        # .environment(env = CryptoEnv, env_config= env_config, disable_env_checking=True,)\
-    # .environment(env="LunarLander-v2", disable_env_checking=True, ) \
-    # .environment(env = "pong_env",disable_env_checking=True,)\
+                                           grad_clip=1.0,
+                                           grad_clip_by="norm",
+                                           )
 
-    # pprint(impala_config.to_dict())
-    ray.init(object_store_memory=4 * 1024 * 1024 * 1024)
-    tune.Tuner("IMPALA")
-    algo = impala_config.build(env = "my_env", env_config=env_cfg)
-    algo.train()
-    # algo.restore("D:\modelbackup\checkpoint_002512")
-    # policy = trainer.get_policy()
-    last_time = time.time()
-    # algo.save("/checkpoint/init")
-    while 1:
-        result = algo.train()
-        current_time = time.time()
-        # print(pretty_print(result))
-        # stop training of the target train steps or reward are reached
-        # if (result["episode_reward_mean"] >= args.stop_reward
-        # ):
-        #     break
-        # if (result["episode_reward_mean"] >= 0 and (current_time-last_time)>300):
+config = config.framework(framework="torch")
+config = config.resources(num_gpus=0.5,
+                          )
+config = config.environment(env = "my_env", env_config=env_cfg)
+config = config.exploration(exploration_config = {"type": "StochasticSampling"},)
+config = config.rollouts(num_rollout_workers=num_rollout_worker,
+                         create_env_on_local_worker=True,
+                         num_envs_per_worker=num_env,
+                         rollout_fragment_length=num_rollout)
+algo = config.build()
+# algo.restore("/checkpoint/model_rnn_1024_tf_60_fee_0_07")
+last_time = time.time()
+target_metric = -1.0
+average_weight = 0.9
+max_metric = 0.0
+while 1:
+    result = algo.train()
+    current_time = time.time()
+    # stop training of the target train steps or reward are reached
+    try:
+        benchmark = result["info"]["learner"]["default_policy"]["learner_stats"]["vf_explained_var"]
+        target_metric = average_weight * target_metric + (1-average_weight) * np.nan_to_num(benchmark)
+        if target_metric > 0.9:
+            break
+        if result["info"]["learner"]["default_policy"]["learner_stats"]["var_gnorm"] > 1e4:
+            break
+    except:
+        pass
+
+    # if (result["episode_reward_mean"] >= 0 and (current_time-last_time)>300):
+    if target_metric > max_metric*1.01:
+        algo.save("/checkpoint/model_20240407")
+        max_metric = target_metric
+
         if (current_time - last_time) > 600:
-            algo.save("/checkpoint/")
             last_time = current_time
-    ray.shutdown()
+            print(datetime.fromtimestamp(current_time), "{:.4f}".format(target_metric))
+
+ray.shutdown()

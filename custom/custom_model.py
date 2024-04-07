@@ -32,7 +32,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
         model_config,
         name,
         fc_size=8,
-        lstm_size=1024,
+        lstm_size=2048,
     ):
         nn.Module.__init__(self)
         super().__init__(obs_space,
@@ -51,7 +51,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
         self.action_space_struct = get_base_struct_from_space(self.action_space)
         self.action_dim = 0
 
-        self.popart_beta = 3e-4
+        self.popart_beta = 1e-2
         self.count = 1
 
         for space in tree.flatten(self.action_space_struct):
