@@ -32,7 +32,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
         model_config,
         name,
         fc_size=8,
-        lstm_size=2048,
+        lstm_size=1024,
     ):
         nn.Module.__init__(self)
         super().__init__(obs_space,
@@ -74,8 +74,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
             self.obs_size += 1
 
         self.fc1 = nn.Linear(self.obs_size, self.fc_size)
-
-        self.fc2 = nn.Linear(self.fc_size, self.obs_size)
+        self.fc2 = nn.Linear(self.fc_size, self.obs_size, bias=False)
         self.ln2 = nn.LayerNorm(self.obs_size)
 
         self.activation = nn.SiLU()
@@ -89,6 +88,8 @@ class CustomRNNModel(TorchRNN, nn.Module):
         self._logits_branch = nn.Linear(self.cell_size, num_outputs)
         self._value_branch = nn.Linear(self.cell_size, 1)
 
+        self.g_max = nn.Parameter(torch.tensor(1.0), requires_grad=False)
+        self.g_min = nn.Parameter(torch.tensor(0.0), requires_grad=False)
 
         self.mu = nn.Parameter(torch.tensor(0.0), requires_grad=False)
         self.nu = nn.Parameter(torch.tensor(1.0), requires_grad=False)
@@ -98,6 +99,9 @@ class CustomRNNModel(TorchRNN, nn.Module):
         self.sigma = nn.Parameter(torch.tensor(1.0), requires_grad=False)
         self.skewness = nn.Parameter(torch.tensor(1.0), requires_grad=False)
         self.kurtosis = nn.Parameter(torch.tensor(1.0), requires_grad=False)
+
+        self.new_g_max = nn.Parameter(torch.tensor(1.0), requires_grad=False)
+        self.new_g_min = nn.Parameter(torch.tensor(0.0), requires_grad=False)
 
         self.new_mu = nn.Parameter(torch.tensor(0.0), requires_grad=False)
         self.new_nu = nn.Parameter(torch.tensor(1.0), requires_grad=False)
@@ -146,32 +150,42 @@ class CustomRNNModel(TorchRNN, nn.Module):
             adaptive_beta = self.popart_beta / (1-(1-self.popart_beta)**self.count)
 
         with torch.no_grad():
-            updated_mu = (1 - adaptive_beta) * self.mu + adaptive_beta * self.new_mu
-            updated_nu = (1 - adaptive_beta) * self.nu + adaptive_beta * self.new_nu
-            updated_xi = (1 - adaptive_beta) * self.xi + adaptive_beta * self.new_xi
-            updated_omicron = (1 - adaptive_beta) * self.omicron + adaptive_beta * self.new_omicron
 
-            sigma = torch.sqrt(updated_nu - torch.pow(updated_mu,2))
-            updated_sigma = torch.clamp(sigma, 1e-6, 1e6)
+            updated_max = (1 - adaptive_beta) * self.g_max + adaptive_beta * self.new_g_max
+            updated_min = (1 - adaptive_beta) * self.g_min + adaptive_beta * self.new_g_min
 
-            moment3 = updated_xi - 3 * (updated_mu * updated_nu) + 2 * (torch.pow(updated_mu, 3))
-            updated_skewness = moment3 / torch.pow(sigma,3)
+            # updated_mu = (1 - adaptive_beta) * self.mu + adaptive_beta * self.new_mu
+            # updated_nu = (1 - adaptive_beta) * self.nu + adaptive_beta * self.new_nu
+            #
+            # updated_sigma = torch.sqrt(updated_nu - torch.pow(updated_mu,2))
+            # updated_sigma = torch.clamp(updated_sigma, 1e-6, 1e6)
 
-            moment4 = updated_omicron - 4 * (updated_mu * updated_xi) + 6 * (torch.pow(updated_mu, 2) * updated_nu) - 3 * (torch.pow(updated_mu, 4))
-            updated_kurtosis = moment4 / torch.pow(sigma,4)
+            updated_mu = 0.5*(updated_max+updated_min)
+            updated_sigma = 0.5*(updated_max-updated_min)
+
+            # updated_xi = (1 - adaptive_beta) * self.xi + adaptive_beta * self.new_xi
+            # updated_omicron = (1 - adaptive_beta) * self.omicron + adaptive_beta * self.new_omicron
+            #
+            # moment3 = updated_xi - 3 * (updated_mu * updated_nu) + 2 * (torch.pow(updated_mu, 3))
+            # updated_skewness = moment3 / torch.pow(sigma,3)
+            # moment4 = updated_omicron - 4 * (updated_mu * updated_xi) + 6 * (torch.pow(updated_mu, 2) * updated_nu) - 3 * (torch.pow(updated_mu, 4))
+            # updated_kurtosis = moment4 / torch.pow(sigma,4)
 
             self._value_branch.weight *= self.sigma / updated_sigma
             self._value_branch.bias *= self.sigma / updated_sigma
             self._value_branch.bias += (self.mu - updated_mu) / updated_sigma
 
             self.mu.copy_(updated_mu)
-            self.nu.copy_(updated_nu)
-            self.xi.copy_(updated_xi)
-            self.omicron.copy_(updated_omicron)
+            # self.nu.copy_(updated_nu)
+            # self.xi.copy_(updated_xi)
+            # self.omicron.copy_(updated_omicron)
 
             self.sigma.copy_(updated_sigma)
-            self.skewness.copy_(updated_skewness)
-            self.kurtosis.copy_(updated_kurtosis)
+            # self.skewness.copy_(updated_skewness)
+            # self.kurtosis.copy_(updated_kurtosis)
+
+            self.g_max.copy_(updated_max)
+            self.g_min.copy_(updated_min)
 
 
         return self.mu, self.sigma

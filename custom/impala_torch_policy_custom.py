@@ -121,10 +121,16 @@ class VTraceLoss:
             G_value = self.vtrace_returns.vs.to(device)
             G_pg = self.vtrace_returns.pg_values.to(device)
 
+            new_max = torch.max(G_value)
+            new_min = torch.min(G_value)
+
             new_mu = valid_mean(G_value, valid_mask)
             new_nu = valid_mean(torch.pow(G_value, 2), valid_mask)
             new_xi = valid_mean(torch.pow(G_value, 3), valid_mask)
             new_omicron = valid_mean(torch.pow(G_value, 4), valid_mask)
+
+            model.new_g_max.copy_(new_max)
+            model.new_g_min.copy_(new_min)
 
             model.new_mu.copy_(new_mu)
             model.new_nu.copy_(new_nu)

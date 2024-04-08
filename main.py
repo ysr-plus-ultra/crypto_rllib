@@ -14,10 +14,10 @@ env_cfg = {
     "NUM_ACTIONS": 3,
 
     "FEE": 0.07,
-    "MAX_EP": 10800,
+    "MAX_EP": 86400,
     "DF_SIZE": 1038240,
 
-    "frameskip": 15,
+    "frameskip": 60,
     "mode": "train",
 }
 def env_creator(env_config):
@@ -39,7 +39,7 @@ num_env = 16
 num_rollout = 32
 config = ImpalaConfig()
 
-config = config.training(gamma=0.99, lr=1e-3, train_batch_size=32,
+config = config.training(gamma=0.5, lr=1e-3, train_batch_size=32,
                                            model={
                                                "custom_model": "my_torch_model",
                                                "lstm_use_prev_action": True,
@@ -56,7 +56,7 @@ config = config.training(gamma=0.99, lr=1e-3, train_batch_size=32,
                                            epsilon=1e-6,
                                            decay=0.0,
                                            grad_clip=1.0,
-                                           grad_clip_by="norm",
+                                           grad_clip_by="value",
                                            )
 
 config = config.framework(framework="torch")
@@ -89,12 +89,10 @@ while 1:
         pass
 
     # if (result["episode_reward_mean"] >= 0 and (current_time-last_time)>300):
-    if target_metric > max_metric*1.01:
-        algo.save("/checkpoint/model_20240407")
+    if (current_time - last_time) > 600:
+        algo.save("/checkpoint/model_20240408")
         max_metric = target_metric
-
-        if (current_time - last_time) > 600:
-            last_time = current_time
-            print(datetime.fromtimestamp(current_time), "{:.4f}".format(target_metric))
+        last_time = current_time
+        print(datetime.fromtimestamp(current_time), "{:.4f}".format(target_metric))
 
 ray.shutdown()

@@ -96,8 +96,8 @@ class CryptoEnv(gym.Env):
             self.max_wallet = self.cumsum
 
     def get_step(self):
-        self.num_steps = random.randint(self.frameskip-3, self.frameskip+3)
-        # self.num_steps = self.frameskip
+        self.num_steps = random.randint(self.frameskip-5, self.frameskip+5)
+        self.num_steps = self.frameskip
 
     def reset(self, *, seed=None, options=None):
         self.seed(self.seed_val)
