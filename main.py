@@ -10,16 +10,17 @@ from crypto_env import CryptoEnv
 from ray.tune.registry import register_env
 from pprint import pprint
 env_cfg = {
-    "NUM_STATES": 4,
+    "NUM_STATES": 5,
     "NUM_ACTIONS": 3,
 
     "FEE": 0.07,
     "MAX_EP": 86400,
-    "DF_SIZE": 1038240,
-
+    "DF_SIZE": 1036800,
+    # "DF_SIZE": 172800,
     "frameskip": 60,
     "mode": "train",
 }
+new_model_path = "/checkpoint/model_20240414"
 def env_creator(env_config):
     return CryptoEnv(env_config)
 register_env("my_env", env_creator)
@@ -34,16 +35,16 @@ ray.init(log_to_driver=False)
 
 ModelCatalog.register_custom_model("my_torch_model", CustomRNNModel)
 # model setup end
-num_rollout_worker = 8
+num_rollout_worker = 7
 num_env = 16
 num_rollout = 32
 config = ImpalaConfig()
 
-config = config.training(gamma=0.5, lr=1e-3, train_batch_size=32,
+config = config.training(gamma=0.5, lr=1e-3, train_batch_size=256,
                                            model={
                                                "custom_model": "my_torch_model",
                                                "lstm_use_prev_action": True,
-                                               "lstm_use_prev_reward": True,
+                                               "lstm_use_prev_reward": False,
                                                "custom_model_config": {
                                                },
                                                "max_seq_len": num_rollout,
@@ -56,11 +57,11 @@ config = config.training(gamma=0.5, lr=1e-3, train_batch_size=32,
                                            epsilon=1e-6,
                                            decay=0.0,
                                            grad_clip=1.0,
-                                           grad_clip_by="value",
+                                           grad_clip_by="global_norm",
                                            )
 
 config = config.framework(framework="torch")
-config = config.resources(num_gpus=0.5,
+config = config.resources(num_gpus=1.0,
                           )
 config = config.environment(env = "my_env", env_config=env_cfg)
 config = config.exploration(exploration_config = {"type": "StochasticSampling"},)
@@ -69,7 +70,7 @@ config = config.rollouts(num_rollout_workers=num_rollout_worker,
                          num_envs_per_worker=num_env,
                          rollout_fragment_length=num_rollout)
 algo = config.build()
-# algo.restore("/checkpoint/model_rnn_1024_tf_60_fee_0_07")
+# algo.restore("/checkpoint/model_base_60")
 last_time = time.time()
 target_metric = -1.0
 average_weight = 0.9
@@ -90,9 +91,9 @@ while 1:
 
     # if (result["episode_reward_mean"] >= 0 and (current_time-last_time)>300):
     if (current_time - last_time) > 600:
-        algo.save("/checkpoint/model_20240408")
+        algo.save(new_model_path)
         max_metric = target_metric
         last_time = current_time
         print(datetime.fromtimestamp(current_time), "{:.4f}".format(target_metric))
-
+algo.save(new_model_path)
 ray.shutdown()

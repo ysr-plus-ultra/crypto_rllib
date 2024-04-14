@@ -64,6 +64,7 @@ class CryptoEnv(gym.Env):
         self.stop_level = 0.5
         self.fee_count = 50
         self.count_max = 50
+        self.last_price = None
 
     def step(self, action):
         info = {}
@@ -96,11 +97,11 @@ class CryptoEnv(gym.Env):
             self.max_wallet = self.cumsum
 
     def get_step(self):
-        self.num_steps = random.randint(self.frameskip-5, self.frameskip+5)
-        self.num_steps = self.frameskip
+        self.num_steps = random.randint(int(self.frameskip*0.8), int(self.frameskip*1.2))
+        # self.num_steps = self.frameskip
 
     def reset(self, *, seed=None, options=None):
-        self.seed(self.seed_val)
+        super().reset(seed=self.seed_val)
         if self.cumsum > 0 :
             self.fee_count+=1
 
@@ -132,6 +133,7 @@ class CryptoEnv(gym.Env):
         self._period1 = self.num_steps
 
         self.set_fee()
+        self.last_price = None
         state = self.getState()
 
         clip_value = self.df.loc[:, self.col].iloc[self._period1:]
@@ -167,31 +169,27 @@ class CryptoEnv(gym.Env):
 
         return reward
 
-    def seed(self, seed=None):
-        random.seed(seed)
-        np.random.seed(seed)
-
     def getState(self):
         raw_price = self.df.iloc[self._period0:self._period1][self.columns].values.flatten()
+        if self._period1 > len(self.df):
+            self.num_steps = len(self.df) - self._period0
+
         log_price = np.log(raw_price)
 
         _h_idx = np.argmax(log_price)
         _l_idx = np.argmin(log_price)
 
-        if _h_idx <= _l_idx:
-            highlow = raw_price[_h_idx] - raw_price[_l_idx]
-        else:
-            highlow = raw_price[_l_idx] - raw_price[_h_idx]
+        log_price_ohlc = np.array((log_price[0], log_price[_h_idx], log_price[_l_idx], log_price[-1]))
+
+        if self.last_price is None:
+            self.last_price = log_price_ohlc
 
         self.state = np.zeros(self.num_states)
 
-        self.state[0] = log_price[-1] - log_price[0]
-        self.state[1] = highlow
-        self.state[2] = log_price[_h_idx] - log_price[0]
-
+        self.state[:4] = self.last_price - log_price_ohlc
         self.state[-1] = self.logfee
 
-        # self.state *= np.sqrt(1440/self.frameskip)
+        self.last_price = log_price_ohlc
         return self.state
 
     def render(self, mode='human', close=False):

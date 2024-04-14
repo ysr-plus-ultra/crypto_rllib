@@ -31,7 +31,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
         num_outputs,
         model_config,
         name,
-        fc_size=8,
+        fc_size=16,
         lstm_size=1024,
     ):
         nn.Module.__init__(self)
@@ -51,7 +51,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
         self.action_space_struct = get_base_struct_from_space(self.action_space)
         self.action_dim = 0
 
-        self.popart_beta = 1e-2
+        self.popart_beta = 1e-3
         self.count = 1
 
         for space in tree.flatten(self.action_space_struct):
@@ -73,23 +73,24 @@ class CustomRNNModel(TorchRNN, nn.Module):
             self.fc_size += 1
             self.obs_size += 1
 
-        self.fc1 = nn.Linear(self.obs_size, self.fc_size)
-        self.fc2 = nn.Linear(self.fc_size, self.obs_size, bias=False)
-        self.ln2 = nn.LayerNorm(self.obs_size)
-
-        self.activation = nn.SiLU()
+        # self.fc1 = nn.Linear(self.obs_size, self.fc_size)
+        # self.fc2 = nn.Linear(self.fc_size, self.fc_size, bias=False)
+        # self.ln2 = nn.LayerNorm(self.fc_size)
+        #
+        # self.activation = nn.ReLU6()
+        # self.activation = nn.SiLU()
 
         self.rnn = rnnlib.LayerNormLSTM(self.obs_size, self.cell_size, batch_first=True)
         # self.rnn2 = rnnlib.LayerNormRNN(self.cell_size, self.cell_size, batch_first=True)
-        # self.rnn1 = rnnlib.LayerNormLSTM(self.obs_size, self.cell_size, batch_first=True)
-        # self.rnn2 = rnnlib.LayerNormLSTM(self.cell_size, self.cell_size, batch_first=True)
-        # self.rnn = nn.LSTM(self.fc_size, self.cell_size, batch_first=True)
+        # self.rnn1 = rnnlib.LayerNormLSTM(self.fc_size, self.cell_size, batch_first=True)
+        # self.rnn2 = rnnlib.LayerNormLSTM(self.cell_size, self.fc_size, batch_first=True)
+        # self.rnn = nn.LSTM(self.obs_size, self.cell_size, batch_first=True)
 
         self._logits_branch = nn.Linear(self.cell_size, num_outputs)
         self._value_branch = nn.Linear(self.cell_size, 1)
 
-        self.g_max = nn.Parameter(torch.tensor(1.0), requires_grad=False)
-        self.g_min = nn.Parameter(torch.tensor(0.0), requires_grad=False)
+        # self.g_max = nn.Parameter(torch.tensor(1.0), requires_grad=False)
+        # self.g_min = nn.Parameter(torch.tensor(0.0), requires_grad=False)
 
         self.mu = nn.Parameter(torch.tensor(0.0), requires_grad=False)
         self.nu = nn.Parameter(torch.tensor(1.0), requires_grad=False)
@@ -151,41 +152,41 @@ class CustomRNNModel(TorchRNN, nn.Module):
 
         with torch.no_grad():
 
-            updated_max = (1 - adaptive_beta) * self.g_max + adaptive_beta * self.new_g_max
-            updated_min = (1 - adaptive_beta) * self.g_min + adaptive_beta * self.new_g_min
+            # updated_max = (1 - adaptive_beta) * self.g_max + adaptive_beta * self.new_g_max
+            # updated_min = (1 - adaptive_beta) * self.g_min + adaptive_beta * self.new_g_min
 
-            # updated_mu = (1 - adaptive_beta) * self.mu + adaptive_beta * self.new_mu
-            # updated_nu = (1 - adaptive_beta) * self.nu + adaptive_beta * self.new_nu
-            #
-            # updated_sigma = torch.sqrt(updated_nu - torch.pow(updated_mu,2))
-            # updated_sigma = torch.clamp(updated_sigma, 1e-6, 1e6)
+            updated_mu = (1 - adaptive_beta) * self.mu + adaptive_beta * self.new_mu
+            updated_nu = (1 - adaptive_beta) * self.nu + adaptive_beta * self.new_nu
 
-            updated_mu = 0.5*(updated_max+updated_min)
-            updated_sigma = 0.5*(updated_max-updated_min)
+            updated_sigma = torch.sqrt(updated_nu - torch.pow(updated_mu,2))
+            updated_sigma = torch.clamp(updated_sigma, 1e-6, 1e6)
 
-            # updated_xi = (1 - adaptive_beta) * self.xi + adaptive_beta * self.new_xi
-            # updated_omicron = (1 - adaptive_beta) * self.omicron + adaptive_beta * self.new_omicron
-            #
-            # moment3 = updated_xi - 3 * (updated_mu * updated_nu) + 2 * (torch.pow(updated_mu, 3))
-            # updated_skewness = moment3 / torch.pow(sigma,3)
-            # moment4 = updated_omicron - 4 * (updated_mu * updated_xi) + 6 * (torch.pow(updated_mu, 2) * updated_nu) - 3 * (torch.pow(updated_mu, 4))
-            # updated_kurtosis = moment4 / torch.pow(sigma,4)
+            # updated_mu = 0.5*(updated_max+updated_min)
+            # updated_sigma = 0.5*(updated_max-updated_min)
+
+            updated_xi = (1 - adaptive_beta) * self.xi + adaptive_beta * self.new_xi
+            updated_omicron = (1 - adaptive_beta) * self.omicron + adaptive_beta * self.new_omicron
+
+            moment3 = updated_xi - 3 * (updated_mu * updated_nu) + 2 * (torch.pow(updated_mu, 3))
+            updated_skewness = moment3 / torch.pow(updated_sigma,3)
+            moment4 = updated_omicron - 4 * (updated_mu * updated_xi) + 6 * (torch.pow(updated_mu, 2) * updated_nu) - 3 * (torch.pow(updated_mu, 4))
+            updated_kurtosis = moment4 / torch.pow(updated_sigma,4)
 
             self._value_branch.weight *= self.sigma / updated_sigma
             self._value_branch.bias *= self.sigma / updated_sigma
             self._value_branch.bias += (self.mu - updated_mu) / updated_sigma
 
             self.mu.copy_(updated_mu)
-            # self.nu.copy_(updated_nu)
-            # self.xi.copy_(updated_xi)
-            # self.omicron.copy_(updated_omicron)
+            self.nu.copy_(updated_nu)
+            self.xi.copy_(updated_xi)
+            self.omicron.copy_(updated_omicron)
 
             self.sigma.copy_(updated_sigma)
-            # self.skewness.copy_(updated_skewness)
-            # self.kurtosis.copy_(updated_kurtosis)
+            self.skewness.copy_(updated_skewness)
+            self.kurtosis.copy_(updated_kurtosis)
 
-            self.g_max.copy_(updated_max)
-            self.g_min.copy_(updated_min)
+            # self.g_max.copy_(updated_max)
+            # self.g_min.copy_(updated_min)
 
 
         return self.mu, self.sigma
@@ -227,11 +228,11 @@ class CustomRNNModel(TorchRNN, nn.Module):
             wrapped_out = torch.cat([wrapped_out] + prev_a_r, dim=1)
 
         # layer
-        net = self.fc1(wrapped_out)
-        net = self.activation(net)
-        net = self.fc2(net) + wrapped_out
-
-        wrapped_out = self.ln2(net)
+        # net = self.fc1(wrapped_out)
+        # net = self.activation(net)
+        # net = self.fc2(net)
+        # wrapped_out = self.ln2(net)
+        # wrapped_out = net + wrapped_out
 
         if isinstance(seq_lens, np.ndarray):
             seq_lens = torch.Tensor(seq_lens).int()
@@ -260,11 +261,14 @@ class CustomRNNModel(TorchRNN, nn.Module):
     #     _h4 = torch.unsqueeze(state[3], 0)
     #
     #     net, [h1_, h2_] = self.rnn1(inputs, [_h1, _h2])
-    #     self._features, [h3_, h4_] = self.rnn2(net, [_h3, _h4])
+    #     features, [h3_, h4_] = self.rnn2(net, [_h3, _h4])
+    #
+    #     self._features = inputs + features
     #
     #     model_out = self._logits_branch(self._features)
     #
     #     return model_out, [torch.squeeze(h1_, 0), torch.squeeze(h2_, 0), torch.squeeze(h3_, 0), torch.squeeze(h4_, 0)]
+
     @override(TorchRNN)
     def forward_rnn(
         self, inputs: TensorType, state: List[TensorType], seq_lens: TensorType
@@ -286,7 +290,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
                  1, self.cell_size).zero_().squeeze(0),
              ]
         return h
-    #
+
     # @override(ModelV2)
     # def get_initial_state(self) -> List[TensorType]:
     #     # Place hidden states on same device as model.
@@ -295,8 +299,8 @@ class CustomRNNModel(TorchRNN, nn.Module):
     #          self.fc1.weight.new(
     #              1, self.cell_size).zero_().squeeze(0),
     #          self.fc1.weight.new(
-    #              1, self.cell_size).zero_().squeeze(0),
+    #              1, self.fc_size).zero_().squeeze(0),
     #          self.fc1.weight.new(
-    #              1, self.cell_size).zero_().squeeze(0),
+    #              1, self.fc_size).zero_().squeeze(0),
     #          ]
     #     return h

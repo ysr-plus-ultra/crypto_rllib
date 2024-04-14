@@ -121,16 +121,16 @@ class VTraceLoss:
             G_value = self.vtrace_returns.vs.to(device)
             G_pg = self.vtrace_returns.pg_values.to(device)
 
-            new_max = torch.max(G_value)
-            new_min = torch.min(G_value)
+            # new_max = torch.max(G_value)
+            # new_min = torch.min(G_value)
 
             new_mu = valid_mean(G_value, valid_mask)
             new_nu = valid_mean(torch.pow(G_value, 2), valid_mask)
             new_xi = valid_mean(torch.pow(G_value, 3), valid_mask)
             new_omicron = valid_mean(torch.pow(G_value, 4), valid_mask)
 
-            model.new_g_max.copy_(new_max)
-            model.new_g_min.copy_(new_min)
+            # model.new_g_max.copy_(new_max)
+            # model.new_g_min.copy_(new_min)
 
             model.new_mu.copy_(new_mu)
             model.new_nu.copy_(new_nu)
@@ -139,7 +139,7 @@ class VTraceLoss:
 
             normalized_G_t_vtrace = (G_value - old_mu) / old_sigma
             normalized_G_t_pi = (G_pg - old_mu) / old_sigma
-            # print(normalized_G_t_pi.shape, self.vtrace_returns.clipped_pg_rhos.shape, normalized_values.shape)
+
             pg_advantage = self.vtrace_returns.clipped_pg_rhos.to(device) * (normalized_G_t_pi - normalized_values)
 
         self.value_targets = self.vtrace_returns.vs.to(device)
@@ -158,7 +158,7 @@ class VTraceLoss:
         self.mean_entropy = self.entropy
         self.pg_loss = self.pi_loss + self.vf_loss * vf_loss_coeff
         convex_loss = self.pg_loss * (1+torch.pow(model.alpha*torch.exp(model.beta) - 1, 2)) \
-                      + 0.1*torch.pow(model.alpha, 2)
+                      + 0.1 * torch.pow(model.alpha, 2)
         # # The summed weighted loss.
         self.total_loss = (convex_loss - self.entropy * entropy_coeff)
 
@@ -193,10 +193,6 @@ def make_time_major(policy, seq_lens, tensor):
     # Swap B and T axes.
     res = torch.transpose(rs, 1, 0)
 
-    # if T != policy.config["rollout_fragment_length"]:
-    #     margin = policy.config["rollout_fragment_length"] - T
-    #     pad = res.new_zeros([margin]+list(res.shape[1:]))
-    #     res = torch.cat([res, pad],0)
 
     return res
 
@@ -378,8 +374,7 @@ class ImpalaTorchPolicyCustom(
     @override(TorchPolicyV2)
     def stats_fn(self, train_batch: SampleBatch) -> Dict[str, TensorType]:
         prev_a = train_batch[SampleBatch.ACTIONS]
-        return convert_to_numpy(
-            {
+        result_dict = {
                 "cur_lr": self.cur_lr,
                 "total_loss": torch.mean(
                     torch.stack(self.get_tower_stats("total_loss"))
@@ -388,22 +383,31 @@ class ImpalaTorchPolicyCustom(
                 "entropy": torch.mean(
                     torch.stack(self.get_tower_stats("mean_entropy"))
                 ),
-                "action_0": torch.mean((prev_a-1)*(prev_a - 2.0)/2),
-                "action_1": -torch.mean((prev_a) * (prev_a - 2.0)),
-                "action_2": torch.mean((prev_a) * (prev_a - 1.0) / 2),
                 "var_gnorm": global_norm(self.model.trainable_variables()),
                 "vf_loss": torch.mean(torch.stack(self.get_tower_stats("vf_loss"))),
                 "vf_explained_var": torch.mean(
                     torch.stack(self.get_tower_stats("vf_explained_var"))
-                ),
-                "stat_1_mu": self.model.mu,
-                "stat_2_sigma": self.model.sigma,
-                "stat_3_skewness": self.model.skewness,
-                "stat_4_kurtosis": self.model.kurtosis,
-                'weight_alpha': self.model.alpha,
-                'weight_beta': self.model.beta
-
+                )
             }
+
+        result_dict["action/0"] = torch.mean((prev_a - 1) * (prev_a - 2.0) / 2)
+        result_dict["action/1"] = -torch.mean(prev_a * (prev_a - 2.0))
+        result_dict["action/2"] = torch.mean(prev_a * (prev_a - 1.0) / 2)
+
+        result_dict["popart/mu"] = self.model.mu
+        result_dict["popart/sigma"] = self.model.sigma
+        result_dict["stat_3_skewness"] = self.model.skewness
+        result_dict["stat_4_kurtosis"] = self.model.kurtosis
+        # result_dict["popart/max"] = self.model.g_max
+        # result_dict["popart/min"] = self.model.g_min
+
+        result_dict['stat/alpha'] = self.model.alpha
+        result_dict['stat/beta'] = self.model.beta
+
+        # result_dict['norm/fc1'] = torch.norm(self.model.fc1.weight)
+        # result_dict['norm/fc2'] = torch.norm(self.model.fc2.weight)
+
+        return convert_to_numpy(result_dict
         )
 
     @override(TorchPolicyV2)
