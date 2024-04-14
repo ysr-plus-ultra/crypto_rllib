@@ -32,7 +32,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
         model_config,
         name,
         fc_size=16,
-        lstm_size=1024,
+        lstm_size=128,
     ):
         nn.Module.__init__(self)
         super().__init__(obs_space,
@@ -54,6 +54,9 @@ class CustomRNNModel(TorchRNN, nn.Module):
         self.popart_beta = 1e-3
         self.count = 1
 
+        self.obs_embed = nn.Linear(self.obs_size, self.fc_size*2, bias=False)
+        self.obs_ln = nn.LayerNorm(self.fc_size*2)
+
         for space in tree.flatten(self.action_space_struct):
             if isinstance(space, Discrete):
                 self.action_dim += space.n
@@ -63,24 +66,21 @@ class CustomRNNModel(TorchRNN, nn.Module):
                 self.action_dim += int(np.product(space.shape))
             else:
                 self.action_dim += int(len(space))
-
-
+        lstm_input_size = self.fc_size *2
 
         if self.use_prev_action:
-            self.fc_size += num_outputs
-            self.obs_size += num_outputs
+            lstm_input_size += self.fc_size
+            self.prev_a_embed = nn.Linear(self.action_dim, self.fc_size, bias=False)
+            self.prev_a_ln = nn.LayerNorm(self.fc_size)
+
         if self.use_prev_reward:
-            self.fc_size += 1
-            self.obs_size += 1
+            lstm_input_size += self.fc_size
+            self.prev_r_embed = nn.Linear(1, self.fc_size, bias=False)
+            self.prev_r_ln = nn.LayerNorm(self.fc_size)
 
-        # self.fc1 = nn.Linear(self.obs_size, self.fc_size)
-        # self.fc2 = nn.Linear(self.fc_size, self.fc_size, bias=False)
-        # self.ln2 = nn.LayerNorm(self.fc_size)
-        #
-        # self.activation = nn.ReLU6()
-        # self.activation = nn.SiLU()
+        self.activation = nn.SiLU()
 
-        self.rnn = rnnlib.LayerNormLSTM(self.obs_size, self.cell_size, batch_first=True)
+        self.rnn = rnnlib.LayerNormLSTM(lstm_input_size, self.cell_size, batch_first=True)
         # self.rnn2 = rnnlib.LayerNormRNN(self.cell_size, self.cell_size, batch_first=True)
         # self.rnn1 = rnnlib.LayerNormLSTM(self.fc_size, self.cell_size, batch_first=True)
         # self.rnn2 = rnnlib.LayerNormLSTM(self.cell_size, self.fc_size, batch_first=True)
@@ -193,11 +193,14 @@ class CustomRNNModel(TorchRNN, nn.Module):
 
     @override(ModelV2)
     def forward(self, input_dict, state, seq_lens: TensorType,):
-        float_input = input_dict["obs_flat"].float()
-        wrapped_out = float_input
+        wrapped_out = []
 
-        # Concat. prev-action/reward if required.
-        prev_a_r = []
+        float_input = input_dict["obs_flat"].float()
+        obs_input = self.obs_embed(float_input)
+        obs_input = self.activation(obs_input)
+        obs_input = self.obs_ln(obs_input)
+        wrapped_out.append(obs_input)
+
         # Prev actions.
         if self.model_config["lstm_use_prev_action"]:
             prev_a = input_dict[SampleBatch.PREV_ACTIONS]
@@ -205,11 +208,10 @@ class CustomRNNModel(TorchRNN, nn.Module):
             # have been sent to environment):
             # Flatten/one-hot into 1D array.
             if self.model_config["_disable_action_flattening"]:
-                prev_a_r.append(
-                    flatten_inputs_to_1d_tensor(
+                prev_a = flatten_inputs_to_1d_tensor(
                         prev_a, spaces_struct=self.action_space_struct, time_axis=False
                     )
-                )
+
             # If actions are already flattened (but not one-hot'd yet!),
             # one-hot discrete/multi-discrete actions here.
             else:
@@ -217,22 +219,25 @@ class CustomRNNModel(TorchRNN, nn.Module):
                     prev_a = one_hot(prev_a.float(), self.action_space)
                 else:
                     prev_a = prev_a.float()
-                prev_a_r.append(torch.reshape(prev_a, [-1, self.action_dim]))
+                prev_a = torch.reshape(prev_a, [-1, self.action_dim])
+
+            prev_a_input = self.prev_a_embed(prev_a.float())
+            prev_a_input = self.activation(prev_a_input)
+            prev_a_input = self.prev_a_ln(prev_a_input)
+
+            wrapped_out.append(prev_a_input)
+
+
         # Prev rewards.
         if self.model_config["lstm_use_prev_reward"]:
-            prev_a_r.append(
-                torch.reshape(input_dict[SampleBatch.PREV_REWARDS].float(), [-1, 1])
-            )
-        # Concat prev. actions + rewards to the "main" input.
-        if prev_a_r:
-            wrapped_out = torch.cat([wrapped_out] + prev_a_r, dim=1)
+            prev_r = torch.reshape(input_dict[SampleBatch.PREV_REWARDS].float(), [-1, 1])
+            prev_r_input = self.prev_r_embed(prev_r)
+            prev_r_input = self.activation(prev_r_input)
+            prev_r_input = self.prev_r_ln(prev_r_input)
 
-        # layer
-        # net = self.fc1(wrapped_out)
-        # net = self.activation(net)
-        # net = self.fc2(net)
-        # wrapped_out = self.ln2(net)
-        # wrapped_out = net + wrapped_out
+            wrapped_out.append(prev_r_input)
+
+        wrapped_out = torch.cat(wrapped_out, dim=1)
 
         if isinstance(seq_lens, np.ndarray):
             seq_lens = torch.Tensor(seq_lens).int()
@@ -284,9 +289,9 @@ class CustomRNNModel(TorchRNN, nn.Module):
     @override(ModelV2)
     def get_initial_state(self) -> List[TensorType]:
         # Place hidden states on same device as model.
-        h = [self.fc1.weight.new(
+        h = [self._logits_branch.weight.new(
                 1, self.cell_size).zero_().squeeze(0),
-             self.fc1.weight.new(
+             self._logits_branch.weight.new(
                  1, self.cell_size).zero_().squeeze(0),
              ]
         return h
