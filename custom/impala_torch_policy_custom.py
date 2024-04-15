@@ -137,11 +137,11 @@ class VTraceLoss:
             model.new_xi.copy_(new_xi)
             model.new_omicron.copy_(new_omicron)
 
-            normalized_G_t_vtrace = (G_value - old_mu) / old_sigma
-            normalized_G_t_pi = (G_pg - old_mu) / old_sigma
+            normalized_G_t_vtrace = torch.clip((G_value - old_mu) / old_sigma, -10.0, 10.0)
+            normalized_G_t_pi = torch.clip((G_pg - old_mu) / old_sigma, -10.0, 10.0)
 
             pg_advantage = self.vtrace_returns.clipped_pg_rhos.to(device) * (normalized_G_t_pi - normalized_values)
-
+        self.monitor_value = normalized_G_t_vtrace
         self.value_targets = self.vtrace_returns.vs.to(device)
         # The policy gradients loss.
 
@@ -359,6 +359,7 @@ class ImpalaTorchPolicyCustom(
         model.tower_stats["entropy"] = loss.entropy
         model.tower_stats["mean_entropy"] = loss.mean_entropy
         model.tower_stats["total_loss"] = loss.total_loss
+        model.tower_stats["monitor_value"] = loss.monitor_value
 
         values_batched = make_time_major(
             self,
@@ -406,6 +407,9 @@ class ImpalaTorchPolicyCustom(
 
         # result_dict['norm/fc1'] = torch.norm(self.model.fc1.weight)
         # result_dict['norm/fc2'] = torch.norm(self.model.fc2.weight)
+
+        result_dict['value/max'] = torch.max(torch.stack(self.get_tower_stats("monitor_value")))
+        result_dict['value/min'] = torch.min(torch.stack(self.get_tower_stats("monitor_value")))
 
         return convert_to_numpy(result_dict
         )

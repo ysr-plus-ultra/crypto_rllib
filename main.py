@@ -20,7 +20,7 @@ env_cfg = {
     "frameskip": 60,
     "mode": "train",
 }
-new_model_path = "/checkpoint/model_20240414"
+new_model_path = "/checkpoint/model_20240415"
 def env_creator(env_config):
     return CryptoEnv(env_config)
 register_env("my_env", env_creator)
@@ -35,16 +35,16 @@ ray.init(log_to_driver=False)
 
 ModelCatalog.register_custom_model("my_torch_model", CustomRNNModel)
 # model setup end
-num_rollout_worker = 7
+num_rollout_worker = 8
 num_env = 16
 num_rollout = 32
 config = ImpalaConfig()
 
-config = config.training(gamma=0.5, lr=1e-3, train_batch_size=256,
+config = config.training(gamma=0.75, lr=1e-3, train_batch_size=256,
                                            model={
                                                "custom_model": "my_torch_model",
                                                "lstm_use_prev_action": True,
-                                               "lstm_use_prev_reward": False,
+                                               "lstm_use_prev_reward": True,
                                                "custom_model_config": {
                                                },
                                                "max_seq_len": num_rollout,
@@ -66,7 +66,7 @@ config = config.resources(num_gpus=1.0,
 config = config.environment(env = "my_env", env_config=env_cfg)
 config = config.exploration(exploration_config = {"type": "StochasticSampling"},)
 config = config.rollouts(num_rollout_workers=num_rollout_worker,
-                         create_env_on_local_worker=True,
+                         create_env_on_local_worker=False,
                          num_envs_per_worker=num_env,
                          rollout_fragment_length=num_rollout)
 algo = config.build()

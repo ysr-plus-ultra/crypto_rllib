@@ -61,7 +61,7 @@ class CryptoEnv(gym.Env):
         self.max_wallet = 0.0
         self.cumsum = 0.0
         self.done = False
-        self.stop_level = 0.5
+        self.stop_level = 0.8
         self.fee_count = 50
         self.count_max = 50
         self.last_price = None
@@ -81,7 +81,8 @@ class CryptoEnv(gym.Env):
         obs = self.getState()
         truncated = False
 
-        if (self.cumsum - self.max_wallet) <= np.log(self.stop_level):
+        # drawdown
+        if self.cumsum <= np.log(self.stop_level):
             self.done = True
 
         if self._period1 >= len(self.df):
@@ -97,7 +98,7 @@ class CryptoEnv(gym.Env):
             self.max_wallet = self.cumsum
 
     def get_step(self):
-        self.num_steps = random.randint(int(self.frameskip*0.8), int(self.frameskip*1.2))
+        self.num_steps = random.randint(int(self.frameskip*0.75), int(self.frameskip*1.25))
         # self.num_steps = self.frameskip
 
     def reset(self, *, seed=None, options=None):

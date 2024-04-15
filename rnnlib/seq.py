@@ -361,10 +361,10 @@ class LayerNormLSTMCell(nn.Module):
 
         f, i, o = tuple(torch.sigmoid(tensor)
                         for tensor in fiou_linear_tensors[:3])
-        u = self.dropout(torch.tanh(fiou_linear_tensors[3]))
+        u = (5/3) * self.dropout(torch.tanh(fiou_linear_tensors[3]))
 
         new_cell = self.cell_ln(i * u + (f * cell_tensor))
-        new_h = o * torch.tanh(new_cell)
+        new_h = (5/3) * o * torch.tanh(new_cell)
 
         return new_h, new_cell
 

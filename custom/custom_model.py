@@ -32,7 +32,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
         model_config,
         name,
         fc_size=16,
-        lstm_size=128,
+        lstm_size=512,
     ):
         nn.Module.__init__(self)
         super().__init__(obs_space,
@@ -66,17 +66,17 @@ class CustomRNNModel(TorchRNN, nn.Module):
                 self.action_dim += int(np.product(space.shape))
             else:
                 self.action_dim += int(len(space))
-        lstm_input_size = self.fc_size *2
+        lstm_input_size = self.fc_size * 2
 
         if self.use_prev_action:
-            lstm_input_size += self.fc_size
-            self.prev_a_embed = nn.Linear(self.action_dim, self.fc_size, bias=False)
-            self.prev_a_ln = nn.LayerNorm(self.fc_size)
+            lstm_input_size += 4
+            self.prev_a_embed = nn.Linear(self.action_dim, 4, bias=False)
+            self.prev_a_ln = nn.LayerNorm(4)
 
         if self.use_prev_reward:
-            lstm_input_size += self.fc_size
-            self.prev_r_embed = nn.Linear(1, self.fc_size, bias=False)
-            self.prev_r_ln = nn.LayerNorm(self.fc_size)
+            lstm_input_size += 4
+            self.prev_r_embed = nn.Linear(1, 4, bias=False)
+            self.prev_r_ln = nn.LayerNorm(4)
 
         self.activation = nn.SiLU()
 
@@ -231,6 +231,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
         # Prev rewards.
         if self.model_config["lstm_use_prev_reward"]:
             prev_r = torch.reshape(input_dict[SampleBatch.PREV_REWARDS].float(), [-1, 1])
+            # wrapped_out.append(prev_r)
             prev_r_input = self.prev_r_embed(prev_r)
             prev_r_input = self.activation(prev_r_input)
             prev_r_input = self.prev_r_ln(prev_r_input)
