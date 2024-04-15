@@ -6,6 +6,7 @@ from custom.impala_custom import ImpalaConfig
 import time
 from datetime import datetime
 # env setup
+import copy
 from crypto_env import CryptoEnv
 from ray.tune.registry import register_env
 from pprint import pprint
@@ -69,6 +70,13 @@ config = config.rollouts(num_rollout_workers=num_rollout_worker,
                          create_env_on_local_worker=False,
                          num_envs_per_worker=num_env,
                          rollout_fragment_length=num_rollout)
+eval_config = copy.deepcopy(env_cfg)
+eval_config["mode"] = "eval"
+
+config = config.evaluation(evaluation_interval= 1e6,
+                           evaluation_duration = 1,
+                           evaluation_duration_unit = "episodes",
+                           evaluation_config = {"env": "my_env" , "env_config":eval_config})
 algo = config.build()
 # algo.restore("/checkpoint/model_base_60")
 last_time = time.time()

@@ -56,7 +56,10 @@ class CryptoEnv(gym.Env):
         self.df_size = config['DF_SIZE']
         self.last_state= np.zeros(len(self.columns))
         self.df = None
-        self.col = 'btcusdt_FUTURES_adjusted'
+        if self.mode == "train":
+            self.col = 'btcusdt_FUTURES_adjusted'
+        else:
+            self.col = 'btcusdt_FUTURES_ret'
         self.last_signal = 0
         self.max_wallet = 0.0
         self.cumsum = 0.0
