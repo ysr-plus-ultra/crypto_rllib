@@ -137,8 +137,8 @@ class VTraceLoss:
             model.new_xi.copy_(new_xi)
             model.new_omicron.copy_(new_omicron)
 
-            normalized_G_t_vtrace = torch.clip((G_value - old_mu) / old_sigma, -10.0, 10.0)
-            normalized_G_t_pi = torch.clip((G_pg - old_mu) / old_sigma, -10.0, 10.0)
+            normalized_G_t_vtrace = torch.clip((G_value - old_mu) / old_sigma, -6.0, 6.0)
+            normalized_G_t_pi = torch.clip((G_pg - old_mu) / old_sigma, -6.0, 6.0)
 
             pg_advantage = self.vtrace_returns.clipped_pg_rhos.to(device) * (normalized_G_t_pi - normalized_values)
         self.monitor_value = normalized_G_t_vtrace

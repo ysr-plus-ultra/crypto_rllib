@@ -11,7 +11,7 @@ from crypto_env import CryptoEnv
 from ray.tune.registry import register_env
 from pprint import pprint
 env_cfg = {
-    "NUM_STATES": 5,
+    "NUM_STATES": 16,
     "NUM_ACTIONS": 3,
 
     "FEE": 0.07,
@@ -21,7 +21,8 @@ env_cfg = {
     "frameskip": 60,
     "mode": "train",
 }
-new_model_path = "/checkpoint/model_20240415"
+new_model_path = "/checkpoint/model_20240416"
+eval_model_path = "/checkpoint/model_eval_512"
 def env_creator(env_config):
     return CryptoEnv(env_config)
 register_env("my_env", env_creator)
@@ -41,11 +42,11 @@ num_env = 16
 num_rollout = 32
 config = ImpalaConfig()
 
-config = config.training(gamma=0.75, lr=1e-3, train_batch_size=256,
+config = config.training(gamma=0.5, lr=1e-3, train_batch_size=256,
                                            model={
                                                "custom_model": "my_torch_model",
                                                "lstm_use_prev_action": True,
-                                               "lstm_use_prev_reward": True,
+                                               "lstm_use_prev_reward": False,
                                                "custom_model_config": {
                                                },
                                                "max_seq_len": num_rollout,
@@ -71,18 +72,25 @@ config = config.rollouts(num_rollout_workers=num_rollout_worker,
                          num_envs_per_worker=num_env,
                          rollout_fragment_length=num_rollout)
 eval_config = copy.deepcopy(env_cfg)
+eval_config["MAX_EP"] = 43200
+eval_config["DF_SIZE"] = 43200
 eval_config["mode"] = "eval"
 
-config = config.evaluation(evaluation_interval= 1e6,
-                           evaluation_duration = 1,
+config = config.evaluation(evaluation_interval= 10,
+                           evaluation_duration = 32,
                            evaluation_duration_unit = "episodes",
-                           evaluation_config = {"env": "my_env" , "env_config":eval_config})
+                           evaluation_config = {"env": "my_env" ,
+                                                "env_config":eval_config,
+                                                "num_envs_per_worker": 4},
+                           evaluation_parallel_to_training = True,
+                           evaluation_num_workers = 8)
 algo = config.build()
 # algo.restore("/checkpoint/model_base_60")
 last_time = time.time()
 target_metric = -1.0
 average_weight = 0.9
 max_metric = 0.0
+eval_metric = 0.0
 while 1:
     result = algo.train()
     current_time = time.time()
@@ -103,5 +111,16 @@ while 1:
         max_metric = target_metric
         last_time = current_time
         print(datetime.fromtimestamp(current_time), "{:.4f}".format(target_metric))
+
+    try:
+        eval_benchmark = np.nan_to_num(result["evaluation"]["episode_reward_mean"])
+        eval_smooth = average_weight * eval_metric + (1-average_weight) * eval_benchmark
+        if eval_smooth > eval_metric:
+            eval_metric = eval_smooth
+            print(datetime.fromtimestamp(current_time), "eval: {:.4f}".format(eval_smooth))
+            algo.save(eval_model_path)
+    except:
+        pass
+
 algo.save(new_model_path)
 ray.shutdown()

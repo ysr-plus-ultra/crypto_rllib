@@ -11,7 +11,9 @@ def truncated_normal():
         return random_number
     else:
         return truncated_normal()
-
+def bitfield(n, k):
+    x = [(n >> i) & 1 for i in range(n.bit_length())][::-1]
+    return np.array([0]*(k-len(x)) + x)
 class CryptoEnv(gym.Env):
     def __init__(self, config=None):
 
@@ -56,15 +58,12 @@ class CryptoEnv(gym.Env):
         self.df_size = config['DF_SIZE']
         self.last_state= np.zeros(len(self.columns))
         self.df = None
-        if self.mode == "train":
-            self.col = 'btcusdt_FUTURES_adjusted'
-        else:
-            self.col = 'btcusdt_FUTURES_ret'
+        self.col = 'btcusdt_FUTURES_adjusted'
         self.last_signal = 0
         self.max_wallet = 0.0
         self.cumsum = 0.0
         self.done = False
-        self.stop_level = 0.8
+        self.stop_level = 0.5
         self.fee_count = 50
         self.count_max = 50
         self.last_price = None
@@ -106,6 +105,7 @@ class CryptoEnv(gym.Env):
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=self.seed_val)
+        print(self.mode, self.seed_val)
         if self.cumsum > 0 :
             self.fee_count+=1
 
@@ -133,6 +133,15 @@ class CryptoEnv(gym.Env):
 
         self.get_step()
 
+        if self.mode == "train":
+            clip_value = self.df.loc[:, self.col].iloc[self._period1:]
+            self.df.loc[:, self.col] = clip_value - np.nanmean(clip_value)
+        else:
+            pass
+
+        self.gap_stack = self.df[self.col].values
+        self.state_stack = self.df[self.columns].values
+
         self._period0 = 0
         self._period1 = self.num_steps
 
@@ -140,28 +149,29 @@ class CryptoEnv(gym.Env):
         self.last_price = None
         state = self.getState()
 
-        clip_value = self.df.loc[:, self.col].iloc[self._period1:]
-        self.df.loc[:, self.col] = clip_value - np.nanmean(clip_value)
-
         return state, {}
 
     def set_fee(self):
-        if self.max_fee != 0.0:
-            fee_loc = min(self.count_max, self.fee_count) / self.count_max * self.max_fee
-            fee_scale = fee_loc / 2
+        if self.mode == "train":
+            if self.max_fee != 0.0:
+                fee_loc = min(self.count_max, self.fee_count) / self.count_max * self.max_fee
+                fee_scale = fee_loc / 2
 
-            self.fee = fee_loc + truncated_normal() * fee_scale
-            self.logfee = np.log(1 - (self.fee / 100))
+                self.fee = fee_loc + truncated_normal() * fee_scale
+                self.logfee = np.log(1 - (self.fee / 100))
+            else:
+                self.fee = 0.0
+                self.logfee = 0.0
         else:
-            self.fee = 0.0
-            self.logfee = 0.0
+            self.fee = self.max_fee
+            self.logfee = np.log(1 - (self.fee / 100))
 
     def _take_action(self, action):
         #action = 0,1,2
 
         signal = [0, 1, -1][action]
         signal_gap = abs(self.last_signal - signal)
-        _ = self.df.iloc[self._period0:self._period1][self.col].values
+        _ = self.gap_stack[self._period0:self._period1]
         gap = np.nansum(_)
         reward = 0.0
         reward += self.logfee * signal_gap
@@ -174,7 +184,8 @@ class CryptoEnv(gym.Env):
         return reward
 
     def getState(self):
-        raw_price = self.df.iloc[self._period0:self._period1][self.columns].values.flatten()
+        raw_price = self.state_stack[self._period0:self._period1].flatten()
+
         if self._period1 > len(self.df):
             self.num_steps = len(self.df) - self._period0
 
@@ -184,15 +195,17 @@ class CryptoEnv(gym.Env):
         _l_idx = np.argmin(log_price)
 
         log_price_ohlc = np.array((log_price[0], log_price[_h_idx], log_price[_l_idx], log_price[-1]))
-
         if self.last_price is None:
             self.last_price = log_price_ohlc
 
         self.state = np.zeros(self.num_states)
 
-        self.state[:4] = self.last_price - log_price_ohlc
-        self.state[-1] = self.logfee
-
+        x1 = self.last_price - log_price_ohlc
+        x2 = np.exp(x1) - 1.0
+        time_array = bitfield(self.num_steps, 7)
+        y = time_array/np.sqrt(np.sum(time_array))
+        z = self.logfee
+        self.state = np.concatenate([x1,x2,y,[z]])
         self.last_price = log_price_ohlc
         return self.state
 
