@@ -157,10 +157,10 @@ class VTraceLoss:
         self.entropy = torch.sum(actions_entropy * valid_mask) / torch.sum(valid_mask)
         self.mean_entropy = self.entropy
         self.pg_loss = self.pi_loss + self.vf_loss * vf_loss_coeff
-        convex_loss = self.pg_loss * (1+torch.pow(model.alpha*torch.exp(model.beta) - 1, 2)) \
+        convex_loss = (self.pg_loss - self.entropy * entropy_coeff) * (1+torch.pow(model.alpha*torch.exp(model.beta) - 1, 2)) \
                       + 0.1 * torch.pow(model.alpha, 2)
         # # The summed weighted loss.
-        self.total_loss = (convex_loss - self.entropy * entropy_coeff)
+        self.total_loss = convex_loss
 
 
 def make_time_major(policy, seq_lens, tensor):

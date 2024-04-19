@@ -3,6 +3,7 @@ from gymnasium.spaces import Discrete, Box
 import pandas as pd
 import numpy as np
 import random
+import nb.auth_file as myauth
 from pymongo import MongoClient
 
 def truncated_normal():
@@ -25,7 +26,7 @@ class CryptoEnv(gym.Env):
 
         self.num_states = config['NUM_STATES']
         self.frameskip = config['frameskip']
-
+        self.timeframe_adjust = np.sqrt(43200/self.frameskip)
         self._period0=None
         self._period1=None
 
@@ -42,7 +43,7 @@ class CryptoEnv(gym.Env):
         self.seed_val = self.worker_idx + (self.num_workers * self.vector_env_index)
 
         self.mode = config['mode']
-        self.client = MongoClient("mongodb://ysr1004:q5n76hrh@192.168.0.10:27017")
+        self.client = MongoClient(myauth.mongo_url)
         # self.client = MongoClient("mongodb://localhost:27017")
         if self.mode == "train":
             self.db = self.client.Binance
@@ -63,7 +64,7 @@ class CryptoEnv(gym.Env):
         self.max_wallet = 0.0
         self.cumsum = 0.0
         self.done = False
-        self.stop_level = 0.5
+        self.stop_level = 0.6
         self.fee_count = 50
         self.count_max = 50
         self.last_price = None
@@ -78,7 +79,6 @@ class CryptoEnv(gym.Env):
         self._period1 += self.num_steps
 
         reward = self._take_action(action)
-        self.refresh_max_wallet(reward)
         self.set_fee()
         obs = self.getState()
         truncated = False
@@ -126,24 +126,26 @@ class CryptoEnv(gym.Env):
                                     )
                                )
 
-        self.last_signal = 0
+        self.last_signal = random.randint(-1, 1)
         self.max_wallet = 0.0
         self.cumsum = 0.0
         self.done = False
 
         self.get_step()
 
-        if self.mode == "train":
-            clip_value = self.df.loc[:, self.col].iloc[self._period1:]
-            self.df.loc[:, self.col] = clip_value - np.nanmean(clip_value)
-        else:
-            pass
-
-        self.gap_stack = self.df[self.col].values
-        self.state_stack = self.df[self.columns].values
-
         self._period0 = 0
         self._period1 = self.num_steps
+
+        self.gap_stack = self.df[self.col].to_numpy(copy=True)
+        self.gap_stack[:self._period1] = np.nan
+        self.state_stack = self.df[self.columns].to_numpy(copy=True)
+
+        # detrending
+        # if self.mode == "train":
+        #     clip_value = self.gap_stack[self._period1:]
+        #     self.gap_stack -= np.nanmean(clip_value)
+        # else:
+        #     pass
 
         self.set_fee()
         self.last_price = None
@@ -178,10 +180,12 @@ class CryptoEnv(gym.Env):
         reward += signal * gap
 
         self.last_signal = signal
+        self.refresh_max_wallet(reward)
 
-        self.cumsum += reward
+        percent_reward = np.exp(reward)-1.0
+        log_reward = reward
 
-        return reward
+        return (percent_reward+log_reward) * self.timeframe_adjust
 
     def getState(self):
         raw_price = self.state_stack[self._period0:self._period1].flatten()
@@ -200,12 +204,13 @@ class CryptoEnv(gym.Env):
 
         self.state = np.zeros(self.num_states)
 
-        x1 = self.last_price - log_price_ohlc
-        x2 = np.exp(x1) - 1.0
+        x1 = (self.last_price - log_price_ohlc)
+        x2 = (np.exp(x1) - 1.0)
         time_array = bitfield(self.num_steps, 7)
-        y = time_array/np.sqrt(np.sum(time_array))
+        y = time_array/np.sqrt(7)
         z = self.logfee
-        self.state = np.concatenate([x1,x2,y,[z]])
+        self.state = np.concatenate([x1*self.timeframe_adjust,x2*self.timeframe_adjust,y,[z*self.timeframe_adjust]])
+
         self.last_price = log_price_ohlc
         return self.state
 

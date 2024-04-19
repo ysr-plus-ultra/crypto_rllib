@@ -51,11 +51,10 @@ class CustomRNNModel(TorchRNN, nn.Module):
         self.action_space_struct = get_base_struct_from_space(self.action_space)
         self.action_dim = 0
 
-        self.popart_beta = 1e-3
+        self.popart_beta = 3e-4
         self.count = 1
 
-        self.obs_embed = nn.Linear(self.obs_size, self.fc_size, bias=False)
-        self.obs_ln = nn.LayerNorm(self.fc_size)
+        self.obs_embed = nn.Linear(self.obs_size, self.fc_size)
 
         for space in tree.flatten(self.action_space_struct):
             if isinstance(space, Discrete):
@@ -70,13 +69,11 @@ class CustomRNNModel(TorchRNN, nn.Module):
 
         if self.use_prev_action:
             lstm_input_size += 4
-            self.prev_a_embed = nn.Linear(self.action_dim, 4, bias=False)
-            self.prev_a_ln = nn.LayerNorm(4)
+            self.prev_a_embed = nn.Linear(self.action_dim, 4)
 
         if self.use_prev_reward:
             lstm_input_size += 4
-            self.prev_r_embed = nn.Linear(1, 4, bias=False)
-            self.prev_r_ln = nn.LayerNorm(4)
+            self.prev_r_embed = nn.Linear(1, 4)
 
         # self.activation = nn.ReLU()
         self.activation = nn.SiLU()
@@ -85,7 +82,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
         # self.rnn2 = rnnlib.LayerNormRNN(self.cell_size, self.cell_size, batch_first=True)
         # self.rnn1 = rnnlib.LayerNormLSTM(self.fc_size, self.cell_size, batch_first=True)
         # self.rnn2 = rnnlib.LayerNormLSTM(self.cell_size, self.fc_size, batch_first=True)
-        # self.rnn = nn.LSTM(self.obs_size, self.cell_size, batch_first=True)
+        # self.rnn = nn.LSTM(lstm_input_size, self.cell_size, batch_first=True)
 
         self._logits_branch_sub = nn.Linear(self.cell_size, self.cell_size, bias=False)
         self._logits_branch_ln = nn.LayerNorm(self.cell_size)
@@ -153,18 +150,14 @@ class CustomRNNModel(TorchRNN, nn.Module):
 
     def update_popart(self):
         self.count += 1
-        if self.count > 10000:
-            adaptive_beta = self.popart_beta
-        else:
-            adaptive_beta = self.popart_beta / (1-(1-self.popart_beta)**self.count)
 
         with torch.no_grad():
 
             # updated_max = (1 - adaptive_beta) * self.g_max + adaptive_beta * self.new_g_max
             # updated_min = (1 - adaptive_beta) * self.g_min + adaptive_beta * self.new_g_min
 
-            updated_mu = (1 - adaptive_beta) * self.mu + adaptive_beta * self.new_mu
-            updated_nu = (1 - adaptive_beta) * self.nu + adaptive_beta * self.new_nu
+            updated_mu = (1 - self.popart_beta) * self.mu + self.popart_beta * self.new_mu
+            updated_nu = (1 - self.popart_beta) * self.nu + self.popart_beta * self.new_nu
 
             updated_sigma = torch.sqrt(updated_nu - torch.pow(updated_mu,2))
             updated_sigma = torch.clamp(updated_sigma, 1e-6, 1e6)
@@ -172,13 +165,13 @@ class CustomRNNModel(TorchRNN, nn.Module):
             # updated_mu = 0.5*(updated_max+updated_min)
             # updated_sigma = 0.5*(updated_max-updated_min)
 
-            updated_xi = (1 - adaptive_beta) * self.xi + adaptive_beta * self.new_xi
-            updated_omicron = (1 - adaptive_beta) * self.omicron + adaptive_beta * self.new_omicron
+            updated_xi = (1 - self.popart_beta) * self.xi + self.popart_beta * self.new_xi
+            updated_omicron = (1 - self.popart_beta) * self.omicron + self.popart_beta * self.new_omicron
 
             moment3 = updated_xi - 3 * (updated_mu * updated_nu) + 2 * (torch.pow(updated_mu, 3))
-            updated_skewness = moment3 / torch.pow(updated_sigma,3)
+            updated_skewness = moment3 / torch.pow(updated_sigma, 3)
             moment4 = updated_omicron - 4 * (updated_mu * updated_xi) + 6 * (torch.pow(updated_mu, 2) * updated_nu) - 3 * (torch.pow(updated_mu, 4))
-            updated_kurtosis = moment4 / torch.pow(updated_sigma,4)
+            updated_kurtosis = moment4 / torch.pow(updated_sigma, 4)
 
             self._value_branch.weight *= self.sigma / updated_sigma
             self._value_branch.bias *= self.sigma / updated_sigma
@@ -205,7 +198,6 @@ class CustomRNNModel(TorchRNN, nn.Module):
 
         float_input = input_dict["obs_flat"].float()
         obs_input = self.obs_embed(float_input)
-        obs_input = self.obs_ln(obs_input)
         obs_input = self.activation(obs_input)
         wrapped_out.append(obs_input)
 
@@ -230,17 +222,14 @@ class CustomRNNModel(TorchRNN, nn.Module):
                 prev_a = torch.reshape(prev_a, [-1, self.action_dim])
 
             prev_a_input = self.prev_a_embed(prev_a.float())
-            prev_a_input = self.prev_a_ln(prev_a_input)
             prev_a_input = self.activation(prev_a_input)
 
             wrapped_out.append(prev_a_input)
-
 
         # Prev rewards.
         if self.model_config["lstm_use_prev_reward"]:
             prev_r = torch.reshape(input_dict[SampleBatch.PREV_REWARDS].float(), [-1, 1])
             prev_r_input = self.prev_r_embed(prev_r)
-            prev_r_input = self.prev_r_ln(prev_r_input)
             prev_r_input = self.activation(prev_r_input)
 
             wrapped_out.append(prev_r_input)

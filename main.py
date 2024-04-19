@@ -21,7 +21,7 @@ env_cfg = {
     "frameskip": 60,
     "mode": "train",
 }
-new_model_path = "/checkpoint/model_20240416"
+new_model_path = "/checkpoint/model_20240418"
 eval_model_path = "/checkpoint/model_eval_512"
 def env_creator(env_config):
     return CryptoEnv(env_config)
@@ -37,12 +37,12 @@ ray.init(log_to_driver=False)
 
 ModelCatalog.register_custom_model("my_torch_model", CustomRNNModel)
 # model setup end
-num_rollout_worker = 8
-num_env = 16
+num_env_workers = 8
+num_env = 4
 num_rollout = 32
 config = ImpalaConfig()
 
-config = config.training(gamma=0.5, lr=1e-3, train_batch_size=256,
+config = config.training(gamma=0.5, lr=1e-3, train_batch_size=32,
                                            model={
                                                "custom_model": "my_torch_model",
                                                "lstm_use_prev_action": True,
@@ -58,23 +58,26 @@ config = config.training(gamma=0.5, lr=1e-3, train_batch_size=256,
                                            momentum=0.0,
                                            epsilon=1e-6,
                                            decay=0.0,
-                                           grad_clip=1.0,
+                                           grad_clip=10.0,
                                            grad_clip_by="global_norm",
+                                           replay_proportion = 1.0,
+                                           replay_buffer_num_slots = 1024
                                            )
 
 config = config.framework(framework="torch")
-config = config.resources(num_gpus=1.0,
+config = config.resources(num_gpus = 1.0,
                           )
 config = config.environment(env = "my_env", env_config=env_cfg)
 config = config.exploration(exploration_config = {"type": "StochasticSampling"},)
-config = config.rollouts(num_rollout_workers=num_rollout_worker,
-                         create_env_on_local_worker=False,
+config = config.rollouts(num_rollout_workers=num_env_workers,
                          num_envs_per_worker=num_env,
-                         rollout_fragment_length=num_rollout)
+                         rollout_fragment_length=256,
+                         remote_env_batch_wait_ms=10,)
 eval_config = copy.deepcopy(env_cfg)
 eval_config["MAX_EP"] = 43200
 eval_config["DF_SIZE"] = 43200
 eval_config["mode"] = "eval"
+eval_config["FEE"] = 0.05
 
 config = config.evaluation(evaluation_interval= 10,
                            evaluation_duration = 32,
