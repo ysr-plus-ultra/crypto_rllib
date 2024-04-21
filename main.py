@@ -14,14 +14,14 @@ env_cfg = {
     "NUM_STATES": 16,
     "NUM_ACTIONS": 3,
 
-    "FEE": 0.07,
+    "FEE": 0.06,
     "MAX_EP": 86400,
-    "DF_SIZE": 1036800,
+    "DF_SIZE": 259200,
     # "DF_SIZE": 172800,
     "frameskip": 60,
     "mode": "train",
 }
-new_model_path = "/checkpoint/model_20240418"
+new_model_path = "/checkpoint/model_20240420"
 eval_model_path = "/checkpoint/model_eval_512"
 def env_creator(env_config):
     return CryptoEnv(env_config)
@@ -39,10 +39,10 @@ ModelCatalog.register_custom_model("my_torch_model", CustomRNNModel)
 # model setup end
 num_env_workers = 8
 num_env = 4
-num_rollout = 32
+num_rollout = 64
 config = ImpalaConfig()
 
-config = config.training(gamma=0.5, lr=1e-3, train_batch_size=32,
+config = config.training(gamma=0.0, lr=1e-3, train_batch_size=512,
                                            model={
                                                "custom_model": "my_torch_model",
                                                "lstm_use_prev_action": True,
@@ -53,26 +53,24 @@ config = config.training(gamma=0.5, lr=1e-3, train_batch_size=32,
                                            },
                                            vtrace=True,
                                            opt_type="rmsprop",
-                                           entropy_coeff=0.01,
+                                           entropy_coeff=0.05,
                                            vf_loss_coeff=0.5,
                                            momentum=0.0,
-                                           epsilon=1e-6,
+                                           epsilon=1e-08,
                                            decay=0.0,
-                                           grad_clip=10.0,
+                                           grad_clip=1.0,
                                            grad_clip_by="global_norm",
-                                           replay_proportion = 1.0,
-                                           replay_buffer_num_slots = 1024
                                            )
 
 config = config.framework(framework="torch")
-config = config.resources(num_gpus = 1.0,
+config = config.resources(num_gpus = 0.5,
                           )
 config = config.environment(env = "my_env", env_config=env_cfg)
 config = config.exploration(exploration_config = {"type": "StochasticSampling"},)
 config = config.rollouts(num_rollout_workers=num_env_workers,
                          num_envs_per_worker=num_env,
-                         rollout_fragment_length=256,
-                         remote_env_batch_wait_ms=10,)
+                         rollout_fragment_length=256,)
+
 eval_config = copy.deepcopy(env_cfg)
 eval_config["MAX_EP"] = 43200
 eval_config["DF_SIZE"] = 43200

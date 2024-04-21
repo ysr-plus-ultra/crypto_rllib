@@ -13,7 +13,8 @@
 - POP-ART 적용시
 
 rllib/algorithms/impala 안에있는
-vtrace_tf.py 도 수정해야됨
+vtrace_tf.py 도 수정
+
 line 38~
 ```Python
 VTraceFromLogitsReturns = collections.namedtuple(
@@ -30,4 +31,16 @@ VTraceFromLogitsReturns = collections.namedtuple(
 )
 
 VTraceReturns = collections.namedtuple("VTraceReturns", "vs pg_advantages pg_values clipped_pg_rhos")
+```
+rllib/algorithms/impala/vtrace_torch.py
+
+line 346~
+```Python
+    pg_advantages = clipped_pg_rhos * (rewards + discounts * vs_t_plus_1 - values)
+    pg_values = rewards + discounts * vs_t_plus_1
+    # Make sure no gradients backpropagated through the returned values.
+    return VTraceReturns(vs=vs.detach(),
+                         pg_advantages=pg_advantages.detach(),
+                         clipped_pg_rhos=clipped_pg_rhos.detach(),
+                         pg_values=pg_values.detach())
 ```

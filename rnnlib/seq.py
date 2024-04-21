@@ -323,13 +323,13 @@ class LayerNormLSTMCell(nn.Module):
         self.layer_norm_enabled = layer_norm_enabled
         if layer_norm_enabled:
             self.fiou_ln_layers = nn.ModuleList(
-                nn.LayerNorm(hidden_size) for _ in range(4))
+                nn.LayerNorm(hidden_size, eps=1e-08) for _ in range(4))
             # self.fiou_ln_layers = nn.ModuleList(
             #     nn.LayerNorm(hidden_size) for _ in range(3))
             # self.fiou_ln_layers.append(
             #     nn.LayerNorm(hidden_size) if u_ln is None else u_ln)
             self.cell_ln = nn.LayerNorm(
-                hidden_size) if cell_ln is None else cell_ln
+                hidden_size, eps=1e-08) if cell_ln is None else cell_ln
         else:
             assert cell_ln is None
             # assert u_ln is cell_ln is None
@@ -361,10 +361,10 @@ class LayerNormLSTMCell(nn.Module):
 
         f, i, o = tuple(torch.sigmoid(tensor)
                         for tensor in fiou_linear_tensors[:3])
-        u = (5/3) * self.dropout(torch.tanh(fiou_linear_tensors[3]))
+        u = self.dropout(torch.tanh(fiou_linear_tensors[3]))
 
         new_cell = self.cell_ln(i * u + (f * cell_tensor))
-        new_h = (5/3) * o * torch.tanh(new_cell)
+        new_h = o * torch.tanh(new_cell)
 
         return new_h, new_cell
 

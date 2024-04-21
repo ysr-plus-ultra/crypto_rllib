@@ -137,15 +137,15 @@ class VTraceLoss:
             model.new_xi.copy_(new_xi)
             model.new_omicron.copy_(new_omicron)
 
-            normalized_G_t_vtrace = torch.clip((G_value - old_mu) / old_sigma, -6.0, 6.0)
-            normalized_G_t_pi = torch.clip((G_pg - old_mu) / old_sigma, -6.0, 6.0)
+            normalized_G_t_vtrace = torch.clip((G_value - old_mu) / old_sigma, -10.0, 10.0)
+            normalized_G_t_pi = torch.clip((G_pg - old_mu) / old_sigma, -10.0, 10.0)
 
             pg_advantage = self.vtrace_returns.clipped_pg_rhos.to(device) * (normalized_G_t_pi - normalized_values)
         self.monitor_value = normalized_G_t_vtrace
         self.value_targets = self.vtrace_returns.vs.to(device)
         # The policy gradients loss.
 
-        self.pi_loss = -torch.sum(
+        self.pi_loss = - torch.sum(
             actions_logp * pg_advantage.to(device) * valid_mask
         ) / torch.sum(valid_mask)
 
@@ -157,10 +157,10 @@ class VTraceLoss:
         self.entropy = torch.sum(actions_entropy * valid_mask) / torch.sum(valid_mask)
         self.mean_entropy = self.entropy
         self.pg_loss = self.pi_loss + self.vf_loss * vf_loss_coeff
-        convex_loss = (self.pg_loss - self.entropy * entropy_coeff) * (1+torch.pow(model.alpha*torch.exp(model.beta) - 1, 2)) \
+        convex_loss = (self.pg_loss) * (1+torch.pow(model.alpha*torch.exp(model.beta) - 1, 2)) \
                       + 0.1 * torch.pow(model.alpha, 2)
         # # The summed weighted loss.
-        self.total_loss = convex_loss
+        self.total_loss = convex_loss - self.entropy * entropy_coeff
 
 
 def make_time_major(policy, seq_lens, tensor):
@@ -322,10 +322,6 @@ class ImpalaTorchPolicyCustom(
         else:
             mask = torch.ones_like(rewards)
 
-        if mask.shape[0] < rewards.shape[0]:
-            margin = rewards.shape[0] - mask.shape[0]
-            pad = mask.new_zeros([margin]+list(mask.shape[1:]))
-            mask = torch.cat([mask, pad],0)
         # Prepare actions for loss.
         loss_actions = actions if is_multidiscrete else torch.unsqueeze(actions, dim=1)
         # Inputs are reshaped from [B * T] => [(T|T-1), B] for V-trace calc.

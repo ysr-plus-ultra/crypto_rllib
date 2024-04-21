@@ -113,7 +113,7 @@ class CryptoEnv(gym.Env):
                 print("{} | {}".format(self.fee_count, self.count_max))
 
         if self.mode=="train":
-            self.start_point = np.random.randint(0, self.df_size - self.max_ep - 1)
+            self.start_point = np.random.randint(0, self.df_size - self.max_ep + 1)
         else:
             self.start_point = 0
 
@@ -126,7 +126,7 @@ class CryptoEnv(gym.Env):
                                     )
                                )
 
-        self.last_signal = random.randint(-1, 1)
+        self.last_signal = 0
         self.max_wallet = 0.0
         self.cumsum = 0.0
         self.done = False
@@ -206,8 +206,7 @@ class CryptoEnv(gym.Env):
 
         x1 = (self.last_price - log_price_ohlc)
         x2 = (np.exp(x1) - 1.0)
-        time_array = bitfield(self.num_steps, 7)
-        y = time_array/np.sqrt(7)
+        y = bitfield(self.num_steps, 7)
         z = self.logfee
         self.state = np.concatenate([x1*self.timeframe_adjust,x2*self.timeframe_adjust,y,[z*self.timeframe_adjust]])
 
