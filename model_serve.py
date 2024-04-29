@@ -18,9 +18,9 @@ os.environ["CUBLAS_WORKSPACE_CONFIG"]=":4096:2"
 torch.backends.cudnn.benchmark = True
 ModelCatalog.register_custom_model("my_torch_model", CustomRNNModel)
 _action_space = Discrete(3)
-_observation_space = Box(-np.inf, np.inf, shape=(5,), dtype=np.float32)
-_lstm_size = 256
-model_path = "/checkpoint/model_eval_256"
+_observation_space = Box(-np.inf, np.inf, shape=(13,), dtype=np.float32)
+_lstm_size = 32
+model_path = "/checkpoint/model_eval_32"
 class NumpyArrayEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, np.ndarray):
@@ -44,7 +44,7 @@ class ServeModel:
                                                    model={
                                                        "custom_model": "my_torch_model",
                                                        "lstm_use_prev_action": True,
-                                                       "lstm_use_prev_reward": False,
+                                                       "lstm_use_prev_reward": True,
                                                        "custom_model_config": {
                                                        },
                                                    },

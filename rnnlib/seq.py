@@ -265,7 +265,7 @@ class LayerNormRNNCell(nn.Module):
         self.hidden_size = hidden_size
         self.linear = nn.Linear(
             input_size + hidden_size, hidden_size, bias=not layer_norm_enabled)
-        self.activation = torch.nn.SiLU()
+        self.activation = torch.nn.Tanh()
 
         # if dropout is not None:
         #     if isinstance(dropout, nn.Dropout):
@@ -277,7 +277,7 @@ class LayerNormRNNCell(nn.Module):
 
         self.layer_norm_enabled = layer_norm_enabled
         if layer_norm_enabled:
-            self.layer_norm = nn.LayerNorm(hidden_size)
+            self.layer_norm = nn.LayerNorm(hidden_size,eps=1e-08 )
         else:
             self.layer_norm = no_layer_norm
 
