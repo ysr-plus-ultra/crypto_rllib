@@ -32,7 +32,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
         model_config,
         name,
         fc_size=8,
-        lstm_size=32,
+        lstm_size=24,
     ):
         nn.Module.__init__(self)
         super().__init__(obs_space,
@@ -80,9 +80,9 @@ class CustomRNNModel(TorchRNN, nn.Module):
 
         # self.rnn1 = rnnlib.LayerNormRNN(lstm_input_size, self.cell_size, batch_first=True)
         # self.rnn2 = rnnlib.LayerNormRNN(self.cell_size, self.cell_size, batch_first=True)
-        # self.rnn1 = rnnlib.LayerNormLSTM(self.fc_size, self.cell_size, batch_first=True)
-        # self.rnn2 = rnnlib.LayerNormLSTM(self.cell_size, self.fc_size, batch_first=True)
-        self.rnn = nn.LSTM(lstm_input_size, self.cell_size, batch_first=True)
+        self.rnn1 = nn.LSTM(lstm_input_size, self.cell_size, batch_first=True)
+        self.rnn2 = nn.LSTM(self.cell_size, self.cell_size, batch_first=True)
+        # self.rnn = nn.LSTM(lstm_input_size, self.cell_size, batch_first=True)
         # self.rnn = rnnlib.LayerNormLSTM(lstm_input_size, self.cell_size, batch_first=True)
 
         self._logits_branch_sub = nn.Linear(self.cell_size, self.cell_size)
@@ -269,37 +269,37 @@ class CustomRNNModel(TorchRNN, nn.Module):
     #
     #     return model_out, [torch.squeeze(h1_, 0), torch.squeeze(h2_, 0), torch.squeeze(h3_, 0), torch.squeeze(h4_, 0)]
 
-    # @override(TorchRNN)
-    # def forward_rnn(
-    #     self, inputs: TensorType, state: List[TensorType], seq_lens: TensorType
-    # ) -> (TensorType, List[TensorType]):
-    #
-    #     _h1 = torch.unsqueeze(state[0], 0)
-    #     _h2 = torch.unsqueeze(state[1], 0)
-    #
-    #     net, h1_ = self.rnn1(inputs, _h1)
-    #     self._features, h2_ = self.rnn2(net, _h2)
-    #
-    #     model_out = self._logits_branch_sub(self._features)
-    #     model_out = self._logits_branch_ln(model_out)
-    #     model_out = self.activation(model_out)
-    #     model_out = self._logits_branch(model_out)
-    #
-    #     return model_out, [torch.squeeze(h1_, 0), torch.squeeze(h2_, 0)]
-
     @override(TorchRNN)
     def forward_rnn(
         self, inputs: TensorType, state: List[TensorType], seq_lens: TensorType
     ) -> (TensorType, List[TensorType]):
 
-        self._features, [h, c] = self.rnn(
-            inputs, [torch.unsqueeze(state[0], 0), torch.unsqueeze(state[1], 0)]
-        )
+        _h1 = torch.unsqueeze(state[0], 0)
+        _h2 = torch.unsqueeze(state[1], 0)
+
+        net, h1_ = self.rnn1(inputs, _h1)
+        self._features, h2_ = self.rnn2(net, _h2)
+
         model_out = self._logits_branch_sub(self._features)
-        # model_out = self._logits_branch_ln(model_out)
+        model_out = self._logits_branch_ln(model_out)
         model_out = self.activation(model_out)
         model_out = self._logits_branch(model_out)
-        return model_out, [torch.squeeze(h, 0), torch.squeeze(c, 0)]
+
+        return model_out, [torch.squeeze(h1_, 0), torch.squeeze(h2_, 0)]
+
+    # @override(TorchRNN)
+    # def forward_rnn(
+    #     self, inputs: TensorType, state: List[TensorType], seq_lens: TensorType
+    # ) -> (TensorType, List[TensorType]):
+    #
+    #     self._features, [h, c] = self.rnn(
+    #         inputs, [torch.unsqueeze(state[0], 0), torch.unsqueeze(state[1], 0)]
+    #     )
+    #     model_out = self._logits_branch_sub(self._features)
+    #     # model_out = self._logits_branch_ln(model_out)
+    #     model_out = self.activation(model_out)
+    #     model_out = self._logits_branch(model_out)
+    #     return model_out, [torch.squeeze(h, 0), torch.squeeze(c, 0)]
 
     @override(ModelV2)
     def get_initial_state(self) -> List[TensorType]:

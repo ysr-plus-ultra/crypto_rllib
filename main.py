@@ -24,7 +24,7 @@ env_cfg = {
 # load_model_path = "/checkpoint/model_eval_8"
 load_model_path = None
 new_model_path = "/checkpoint/model_20240428"
-eval_model_path = "/checkpoint/model_eval_128"
+eval_model_path = "/checkpoint/model_eval_32"
 def env_creator(env_config):
     return CryptoEnv(env_config)
 register_env("my_env", env_creator)
@@ -92,7 +92,7 @@ if load_model_path is not None:
     algo.restore(load_model_path)
 last_time = time.time()
 target_metric = -1.0
-average_weight = 0.9
+average_weight = 0.5
 max_metric = 0.0
 eval_metric = 0.0
 while 1:
@@ -117,7 +117,7 @@ while 1:
     #     print(datetime.fromtimestamp(current_time), "{:.4f}".format(target_metric))
 
     try:
-        eval_benchmark = np.nan_to_num(result["evaluation"]["episode_reward_mean"])
+        eval_benchmark = np.nan_to_num(result["evaluation"]["episode_reward_mean"])/np.sqrt(43200/30)
         eval_smooth = average_weight * eval_metric + (1-average_weight) * eval_benchmark
         if eval_smooth > eval_metric:
             eval_metric = eval_smooth

@@ -65,7 +65,7 @@ class CryptoEnv(gym.Env):
         self.max_wallet = 0.0
         self.cumsum = 0.0
         self.done = False
-        self.stop_level = 0.8
+        self.stop_level = 0.5
         self.last_price = None
 
     def step(self, action):
@@ -126,10 +126,7 @@ class CryptoEnv(gym.Env):
         self.cumsum = 0.0
         self.done = False
 
-        if self.mode == "train":
-            self.get_step()
-        else:
-            self.num_steps = self.frameskip
+        self.get_step()
 
         self._period0 = 0
         self._period1 = self.num_steps
@@ -138,10 +135,9 @@ class CryptoEnv(gym.Env):
         self.gap_stack[:self._period1] = np.nan
         self.state_stack = self.df[self.columns].to_numpy(copy=True)
 
-        if not (self.mode == "train"):
-            # detrending
-            clip_value = self.gap_stack[self._period1:]
-            self.gap_stack -= np.nanmean(clip_value)
+        # detrending
+        # clip_value = self.gap_stack[self._period1:]
+        # self.gap_stack -= np.nanmean(clip_value)
 
         self.set_fee()
         self.last_price = None
@@ -209,7 +205,7 @@ class CryptoEnv(gym.Env):
         self.state = np.zeros(self.num_states)
 
         x1 = (self.last_price - log_price_ohlc)
-        x2 = (np.exp(x1) - 1.0)
+        # x2 = (np.exp(x1) - 1.0)
         y = bitfield(self.num_steps, 7)
         z = self.logfee * self.timeframe_adjust
         self.state = np.concatenate([x1,y,[z]])
