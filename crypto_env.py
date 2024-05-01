@@ -44,7 +44,7 @@ class CryptoEnv(gym.Env):
 
         self.mode = config['mode']
         self.client = MongoClient(myauth.mongo_url)
-        # self.client = MongoClient("mongodb://localhost:27017")
+
         if self.mode == "train":
             self.db = self.client.Binance
             self.collection = self.db.Binance
@@ -109,6 +109,7 @@ class CryptoEnv(gym.Env):
 
         if self.mode == "train":
             self.start_point = np.random.randint(0, self.df_size - self.max_ep + 1)
+            self.collection = random.choice([self.db.Binance, self.db.Binance_reverse])
         else:
             self.start_point = 0
 

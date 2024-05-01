@@ -80,8 +80,8 @@ class CustomRNNModel(TorchRNN, nn.Module):
 
         # self.rnn1 = rnnlib.LayerNormRNN(lstm_input_size, self.cell_size, batch_first=True)
         # self.rnn2 = rnnlib.LayerNormRNN(self.cell_size, self.cell_size, batch_first=True)
-        self.rnn1 = nn.LSTM(lstm_input_size, self.cell_size, batch_first=True)
-        self.rnn2 = nn.LSTM(self.cell_size, self.cell_size, batch_first=True)
+        self.rnn1 = nn.GRU(lstm_input_size, self.cell_size, batch_first=True)
+        self.rnn2 = nn.GRU(self.cell_size, self.cell_size, batch_first=True)
         # self.rnn = nn.LSTM(lstm_input_size, self.cell_size, batch_first=True)
         # self.rnn = rnnlib.LayerNormLSTM(lstm_input_size, self.cell_size, batch_first=True)
 
@@ -281,7 +281,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
         self._features, h2_ = self.rnn2(net, _h2)
 
         model_out = self._logits_branch_sub(self._features)
-        model_out = self._logits_branch_ln(model_out)
+        # model_out = self._logits_branch_ln(model_out)
         model_out = self.activation(model_out)
         model_out = self._logits_branch(model_out)
 
