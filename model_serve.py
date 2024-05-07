@@ -18,7 +18,7 @@ os.environ["CUBLAS_WORKSPACE_CONFIG"]=":4096:2"
 torch.backends.cudnn.benchmark = True
 ModelCatalog.register_custom_model("my_torch_model", CustomRNNModel)
 _action_space = Discrete(3)
-_observation_space = Box(-np.inf, np.inf, shape=(13,), dtype=np.float32)
+_observation_space = Box(-np.inf, np.inf, shape=(4,), dtype=np.float32)
 _lstm_size = 32
 model_path = "/checkpoint/model_eval_32"
 class NumpyArrayEncoder(json.JSONEncoder):

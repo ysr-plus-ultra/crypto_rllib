@@ -31,8 +31,8 @@ class CustomRNNModel(TorchRNN, nn.Module):
         num_outputs,
         model_config,
         name,
-        fc_size=8,
-        lstm_size=24,
+        fc_size=4,
+        lstm_size=16,
     ):
         nn.Module.__init__(self)
         super().__init__(obs_space,

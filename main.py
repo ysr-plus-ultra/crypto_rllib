@@ -11,20 +11,20 @@ from crypto_env import CryptoEnv
 from ray.tune.registry import register_env
 from pprint import pprint
 env_cfg = {
-    "NUM_STATES": 13,
+    "NUM_STATES": 4,
     "NUM_ACTIONS": 3,
 
     "FEE": 0.06,
-    "MAX_EP": 129600,
-    "DF_SIZE": 1036800,
+    "MAX_EP": 30000,
+    "DF_SIZE": 228318,
     # "DF_SIZE": 172800,
-    "frameskip": 30,
+    "frameskip": 10,
     "mode": "train",
 }
 # load_model_path = "/checkpoint/model_eval_8"
 load_model_path = None
-new_model_path = "/checkpoint/model_20240428"
-eval_model_path = "/checkpoint/model_eval_32"
+new_model_path = "/checkpoint/model_20240508"
+eval_model_path = "/checkpoint/model_eval_16"
 def env_creator(env_config):
     return CryptoEnv(env_config)
 register_env("my_env", env_creator)
@@ -44,7 +44,7 @@ num_env = 4
 num_rollout = 64
 config = ImpalaConfig()
 
-config = config.training(gamma=0.0, lr=1e-3, train_batch_size=1024,
+config = config.training(gamma=0.5, lr=1e-3, train_batch_size=1024,
                                            model={
                                                "custom_model": "my_torch_model",
                                                "lstm_use_prev_action": True,
@@ -59,7 +59,7 @@ config = config.training(gamma=0.0, lr=1e-3, train_batch_size=1024,
                                            vf_loss_coeff=0.5,
                                            momentum=0.0,
                                            epsilon=1e-08,
-                                           decay=0.0,
+                                           decay=0.0, #1e-6
                                            grad_clip=1.0,
                                            grad_clip_by="global_norm",
                                            )
@@ -74,13 +74,13 @@ config = config.rollouts(num_rollout_workers=num_env_workers,
                          rollout_fragment_length=512,)
 
 eval_config = copy.deepcopy(env_cfg)
-eval_config["MAX_EP"] = 43200
-eval_config["DF_SIZE"] = 43200
+eval_config["MAX_EP"] = 14997
+eval_config["DF_SIZE"] = 14997
 eval_config["mode"] = "eval"
 eval_config["FEE"] = 0.05
 
 config = config.evaluation(evaluation_interval= 10,
-                           evaluation_duration = 32,
+                           evaluation_duration = 128,
                            evaluation_duration_unit = "episodes",
                            evaluation_config = {"env": "my_env" ,
                                                 "env_config":eval_config,
@@ -117,11 +117,10 @@ while 1:
     #     print(datetime.fromtimestamp(current_time), "{:.4f}".format(target_metric))
 
     try:
-        eval_benchmark = np.nan_to_num(result["evaluation"]["episode_reward_mean"])/np.sqrt(43200/30)
-        eval_smooth = average_weight * eval_metric + (1-average_weight) * eval_benchmark
-        if eval_smooth > eval_metric:
-            eval_metric = eval_smooth
-            print(datetime.fromtimestamp(current_time), "eval: {:.4f}".format(eval_smooth))
+        eval_benchmark = np.nan_to_num(result["evaluation"]["episode_reward_mean"])/np.sqrt(43200/env_cfg["frameskip"])
+        if eval_benchmark > eval_metric:
+            eval_metric = eval_benchmark
+            print(datetime.fromtimestamp(current_time), "eval: {:.4f}".format(eval_benchmark))
             algo.save(eval_model_path)
     except:
         pass

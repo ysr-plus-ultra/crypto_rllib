@@ -54,8 +54,7 @@ class CryptoEnv(gym.Env):
         self.columns = ['btcusdt_FUTURES_Open',
                         'btcusdt_FUTURES_High',
                         'btcusdt_FUTURES_Low',
-                        'btcusdt_FUTURES_Close',
-                        'btcusdt_FUTURES_Volume']
+                        'btcusdt_FUTURES_Close']
 
         self.df_size = config['DF_SIZE']
         self.last_state= np.zeros(len(self.columns))
@@ -99,9 +98,9 @@ class CryptoEnv(gym.Env):
             self.max_wallet = self.cumsum
 
     def get_step(self):
-        self.num_steps = random.randint(int(self.frameskip*0.5), int(self.frameskip*1.5))
+        # self.num_steps = random.randint(int(self.frameskip*0.5), int(self.frameskip*1.5))
         # self.num_steps = int((self.frameskip/3) * truncated_normal() + self.frameskip)
-        # self.num_steps = self.frameskip
+        self.num_steps = self.frameskip
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=self.seed_val)
@@ -109,7 +108,10 @@ class CryptoEnv(gym.Env):
 
         if self.mode == "train":
             self.start_point = np.random.randint(0, self.df_size - self.max_ep + 1)
-            self.collection = random.choice([self.db.Binance, self.db.Binance_reverse])
+            self.collection = random.choice([self.db.Binance,
+                                             self.db.Binance_reverse,
+                                             self.db.Binance_negative,
+                                             self.db.Binance_reverse_negative])
         else:
             self.start_point = 0
 
@@ -137,8 +139,9 @@ class CryptoEnv(gym.Env):
         self.state_stack = self.df[self.columns].to_numpy(copy=True)
 
         # detrending
-        # clip_value = self.gap_stack[self._period1:]
-        # self.gap_stack -= np.nanmean(clip_value)
+        if not self.mode == "train":
+            clip_value = self.gap_stack[self._period1:]
+            self.gap_stack -= np.nanmean(clip_value)
 
         self.set_fee()
         self.last_price = None
@@ -147,19 +150,21 @@ class CryptoEnv(gym.Env):
         return state, {}
 
     def set_fee(self):
-        if self.mode == "train":
-            if self.max_fee != 0.0:
-                fee_loc = self.max_fee
-                fee_scale = fee_loc / 2
-
-                self.fee = fee_loc + truncated_normal() * fee_scale
-                self.logfee = np.log(1 - (self.fee / 100))
-            else:
-                self.fee = 0.0
-                self.logfee = 0.0
-        else:
-            self.fee = self.max_fee
-            self.logfee = np.log(1 - (self.fee / 100))
+        # if self.mode == "train":
+        #     if self.max_fee != 0.0:
+        #         fee_loc = self.max_fee
+        #         fee_scale = fee_loc / 2
+        #
+        #         self.fee = fee_loc + truncated_normal() * fee_scale
+        #         self.logfee = np.log(1 - (self.fee / 100))
+        #     else:
+        #         self.fee = 0.0
+        #         self.logfee = 0.0
+        # else:
+        #     self.fee = self.max_fee
+        #     self.logfee = np.log(1 - (self.fee / 100))
+        self.fee = self.max_fee
+        self.logfee = np.log(1 - (self.fee / 100))
 
     def _take_action(self, action):
         #action = 0,1,2
@@ -175,42 +180,33 @@ class CryptoEnv(gym.Env):
         self.last_signal = signal
         self.refresh_max_wallet(reward)
 
-        percent_reward = np.exp(reward)-1.0
         log_reward = reward
-
         return log_reward * self.timeframe_adjust
 
     def getState(self):
         state_stack = self.state_stack[self._period0:self._period1]
-        price_stack = state_stack[:,:4].flatten()
-        volume_stack = state_stack[:,-1].flatten()
+        price_stack = state_stack.flatten()
 
         if self._period1 >= len(self.df):
             self.num_steps = len(self.df) - self._period0
 
-        log_price = np.log(price_stack)
-        log_volume = np.log(np.sum(volume_stack))
+        _h_idx = np.argmax(price_stack)
+        _l_idx = np.argmin(price_stack)
 
-        _h_idx = np.argmax(log_price)
-        _l_idx = np.argmin(log_price)
+        ohlc = np.array((price_stack[0], price_stack[_h_idx], price_stack[_l_idx], price_stack[-1]))
 
-        log_price_ohlc = np.array((log_price[0] * self.timeframe_adjust,
-                                   log_price[_h_idx] * self.timeframe_adjust,
-                                   log_price[_l_idx] * self.timeframe_adjust,
-                                   log_price[-1] * self.timeframe_adjust,
-                                   log_volume))
-        # price_ohlc = np.array((price_stack[0], price_stack[_h_idx], price_stack[_l_idx], price_stack[-1]))
         if self.last_price is None:
-            self.last_price = log_price_ohlc
+            self.last_price = ohlc
 
-        self.state = np.zeros(self.num_states)
+        div_ohlcv = ohlc / self.last_price
+        lower_bound = -5.0 * 0.001658 * np.sqrt(self.frameskip)
+        upper_bound = 5.0 * 0.001658 * np.sqrt(self.frameskip)
+        x = np.clip(np.log(div_ohlcv), lower_bound, upper_bound) * self.timeframe_adjust
+        # y = bitfield(self.num_steps, 7)
+        z = self.logfee * self.timeframe_adjust * np.sqrt(self.frameskip)
 
-        x1 = (self.last_price - log_price_ohlc)
-        # x2 = (np.exp(x1) - 1.0)
-        y = bitfield(self.num_steps, 7)
-        z = self.logfee * self.timeframe_adjust
-        self.state = np.concatenate([x1,y,[z]])
-        self.last_price = log_price_ohlc
+        self.state = x.astype("float32")
+        self.last_price = ohlc
         return self.state
 
     def render(self, mode='human', close=False):
