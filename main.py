@@ -1,4 +1,6 @@
 import warnings
+warnings.simplefilter("ignore", UserWarning)
+warnings.simplefilter("ignore", RuntimeWarning)
 import logging
 import numpy as np
 from ray.rllib.utils.replay_buffers.replay_buffer import StorageUnit
@@ -14,22 +16,17 @@ env_cfg = {
     "NUM_STATES": 4,
     "NUM_ACTIONS": 3,
 
-    "FEE": 0.06,
-    "MAX_EP": 30000,
-    "DF_SIZE": 228318,
+    "FEE": 0.1,
+    "MAX_EP": 15000,
+    "DF_SIZE": 114862,
     # "DF_SIZE": 172800,
-    "frameskip": 10,
+    "frameskip": 5,
     "mode": "train",
 }
-# load_model_path = "/checkpoint/model_eval_8"
+# load_model_path = "/checkpoint/model_eval_32"
 load_model_path = None
-new_model_path = "/checkpoint/model_20240508"
-eval_model_path = "/checkpoint/model_eval_16"
-def env_creator(env_config):
-    return CryptoEnv(env_config)
-register_env("my_env", env_creator)
-
-# env setup end
+new_model_path = "/checkpoint/model_20240509"
+eval_model_path = "/checkpoint/model_eval_32"
 
 # model setup
 from custom.custom_model import CustomRNNModel
@@ -39,52 +36,66 @@ ray.init(log_to_driver=False)
 
 ModelCatalog.register_custom_model("my_torch_model", CustomRNNModel)
 # model setup end
-num_env_workers = 8
-num_env = 4
-num_rollout = 64
+num_env_workers = 4
+num_env = 32
+num_rollout = 16
 config = ImpalaConfig()
 
-config = config.training(gamma=0.5, lr=1e-3, train_batch_size=1024,
-                                           model={
-                                               "custom_model": "my_torch_model",
-                                               "lstm_use_prev_action": True,
-                                               "lstm_use_prev_reward": True,
-                                               "custom_model_config": {
-                                               },
-                                               "max_seq_len": num_rollout,
-                                           },
-                                           vtrace=True,
-                                           opt_type="rmsprop",
-                                           entropy_coeff=0.01,
-                                           vf_loss_coeff=0.5,
-                                           momentum=0.0,
-                                           epsilon=1e-08,
-                                           decay=0.0, #1e-6
-                                           grad_clip=1.0,
-                                           grad_clip_by="global_norm",
-                                           )
+config = config.training(gamma=0.0,
+                         lr=1e-3,
+                         train_batch_size=1024,
+                         model={
+                             "custom_model": "my_torch_model",
+                             "lstm_use_prev_action": True,
+                             "lstm_use_prev_reward": True,
+                             "custom_model_config": {},
+                             "max_seq_len": num_rollout,
+                         },
+                         vtrace=True,
+                         opt_type="rmsprop",
+                         entropy_coeff=0.01,
+                         vf_loss_coeff=0.5,
+                         momentum=0.0,
+                         epsilon=1e-08,
+                         decay=0.0, #1e-6
+                         grad_clip=1.0,
+                         grad_clip_by="global_norm",
+                         replay_proportion = 0.25,
+                         replay_buffer_num_slots = 1024,
+                         )
 
 config = config.framework(framework="torch")
-config = config.resources(num_gpus = 0.5,
+config = config.resources(num_gpus = 1.0,
+                          num_gpus_per_worker=0.5/num_env_workers
                           )
 config = config.environment(env = "my_env", env_config=env_cfg)
-config = config.exploration(exploration_config = {"type": "StochasticSampling"},)
+config = config.exploration(exploration_config = {"type": "StochasticSampling", "random_timesteps": 5e6},)
 config = config.rollouts(num_rollout_workers=num_env_workers,
                          num_envs_per_worker=num_env,
                          rollout_fragment_length=512,)
 
 eval_config = copy.deepcopy(env_cfg)
-eval_config["MAX_EP"] = 14997
-eval_config["DF_SIZE"] = 14997
+eval_config["MAX_EP"] = 7467
+eval_config["DF_SIZE"] = 7467
 eval_config["mode"] = "eval"
 eval_config["FEE"] = 0.05
+def env_creator(env_config):
+    return CryptoEnv(env_config)
+register_env("my_env", env_creator)
 
 config = config.evaluation(evaluation_interval= 10,
                            evaluation_duration = 128,
                            evaluation_duration_unit = "episodes",
                            evaluation_config = {"env": "my_env" ,
                                                 "env_config":eval_config,
-                                                "num_envs_per_worker": 4},
+                                                "num_envs_per_worker": 4,
+                                                "exploration_config" : {
+                                                    "type": "StochasticSampling",
+                                                    "random_timesteps": 0
+                                                },
+                                                "num_gpus":0,
+                                                "num_gpus_per_worker": 0
+                                                },
                            evaluation_parallel_to_training = True,
                            evaluation_num_workers = 8)
 algo = config.build()
@@ -98,23 +109,6 @@ eval_metric = 0.0
 while 1:
     result = algo.train()
     current_time = time.time()
-    # stop training of the target train steps or reward are reached
-    # try:
-    #     benchmark = result["info"]["learner"]["default_policy"]["learner_stats"]["vf_explained_var"]
-    #     target_metric = average_weight * target_metric + (1-average_weight) * np.nan_to_num(benchmark)
-    #     if target_metric > 0.9:
-    #         break
-    #     if result["info"]["learner"]["default_policy"]["learner_stats"]["var_gnorm"] > 1e4:
-    #         break
-    # except:
-    #     pass
-
-    # if (result["episode_reward_mean"] >= 0 and (current_time-last_time)>300):
-    # if (current_time - last_time) > 600:
-    #     algo.save(new_model_path)
-    #     max_metric = target_metric
-    #     last_time = current_time
-    #     print(datetime.fromtimestamp(current_time), "{:.4f}".format(target_metric))
 
     try:
         eval_benchmark = np.nan_to_num(result["evaluation"]["episode_reward_mean"])/np.sqrt(43200/env_cfg["frameskip"])

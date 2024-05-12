@@ -32,7 +32,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
         model_config,
         name,
         fc_size=4,
-        lstm_size=16,
+        lstm_size=32,
     ):
         nn.Module.__init__(self)
         super().__init__(obs_space,
@@ -51,7 +51,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
         self.action_space_struct = get_base_struct_from_space(self.action_space)
         self.action_dim = 0
 
-        self.popart_beta = 3e-4
+        self.popart_beta = 1e-3
 
         self.obs_embed = nn.Linear(self.obs_size, self.fc_size)
         # self.obs_ln = nn.LayerNorm(self.fc_size, eps=1e-08)
