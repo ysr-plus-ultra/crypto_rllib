@@ -3,27 +3,22 @@ import random
 import gymnasium as gym
 import numpy as np
 import pandas as pd
-from gymnasium.spaces import Dict, Discrete, Box
+from gymnasium.spaces import Discrete, Box
 from pymongo import MongoClient
-
+import itertools
 import nb.auth_file as myauth
 
-
-class CryptoEnv(gym.Env):
+class CryptoPortfolioEnv(gym.Env):
+    symbols = ['btcusdt', 'ethusdt', 'adausdt', 'solusdt', 'bnbusdt']
+    col = ["_FUTURES_Open", "_FUTURES_High", "_FUTURES_Low", "_FUTURES_Close", "_FUTURES_Volume", "_FUTURES_ret"]
+    columns = ["".join(x) for x in itertools.product(symbols, col)]
     def __init__(self, config=None, worker_idx=0):
 
-        self.last_reward = None
-        self.last_action = None
-        self.observation_space = Dict(
-            {
-                "ohlc": Box(-np.inf, np.inf, shape=(config['NUM_STATES'],), dtype=np.float32),
-                "prev_action": Box(0, 1.0, shape=(config['NUM_ACTIONS'],), dtype=np.float32),
-                "prev_reward": Box(-np.inf, np.inf, shape=(1,), dtype=np.float32)
-            })
-        self.action_space = Discrete(config['NUM_ACTIONS'])
+        self.observation_space = Box(-np.inf, np.inf, shape=(config['NUM_STATES'],), dtype=np.float32)
+        self.action_space = Box(0, 1.0, shape=(config['NUM_ACTIONS'],), dtype=np.float32)
         self.max_fee = config['FEE']
         self.max_ep = config['MAX_EP']
-        self.num_actions = config['NUM_ACTIONS']
+
         self.num_states = config['NUM_STATES']
         self.frameskip = config['frameskip']
         self.timeframe_adjust = np.sqrt(43200 / self.frameskip)
@@ -51,10 +46,6 @@ class CryptoEnv(gym.Env):
         else:
             self.db = self.client.Binance_valid
             self.collection = self.db.Binance_valid
-        self.columns = ['btcusdt_FUTURES_Open',
-                        'btcusdt_FUTURES_High',
-                        'btcusdt_FUTURES_Low',
-                        'btcusdt_FUTURES_Close']
 
         self.df_size = config['DF_SIZE']
         self.last_state = np.zeros(len(self.columns))
@@ -103,21 +94,15 @@ class CryptoEnv(gym.Env):
         self.state_stack = self.df[self.columns].to_numpy(copy=True)
 
         # detrending
-        if not self.mode == "train":
-            clip_value = self.gap_stack[self._period1:]
-            self.gap_stack -= np.nanmean(clip_value)
+        # if not self.mode == "train":
+        #     clip_value = self.gap_stack[self._period1:]
+        #     self.gap_stack -= np.nanmean(clip_value)
 
-        # clip_value = self.gap_stack[self._period1:]
-        # self.gap_stack -= np.nanmean(clip_value)
+        clip_value = self.gap_stack[self._period1:]
+        self.gap_stack -= np.nanmean(clip_value)
 
         self.set_fee()
         self.last_price = None
-        self.last_action = 0
-        # if self.mode == "train":
-        #     self.last_action = random.randint(0,2)
-        # else:
-        #     self.last_action = 0
-        self.last_reward = 0.0
         state = self.getState()
 
         return state, {}
@@ -133,10 +118,6 @@ class CryptoEnv(gym.Env):
 
         reward = self._take_action(action)
         self.set_fee()
-
-        self.last_action = action
-        self.last_reward = reward
-
         obs = self.getState()
         truncated = False
 
@@ -159,7 +140,6 @@ class CryptoEnv(gym.Env):
     def set_fee(self):
         self.fee = self.max_fee
         self.logfee = np.log(1 - (self.fee / 100))
-
     def get_step(self):
         self.num_steps = self.frameskip
 
@@ -199,13 +179,8 @@ class CryptoEnv(gym.Env):
         lower_bound = -5.0 * 0.002333 * np.sqrt(self.frameskip)
         upper_bound = 5.0 * 0.002333 * np.sqrt(self.frameskip)
         x = np.clip(np.log(div_ohlcv), lower_bound, upper_bound) * self.timeframe_adjust
-        y = np.eye(self.num_actions, dtype="float32")[self.last_action]
-        z = [self.last_reward]
-        self.state = {
-            "ohlc": x.astype("float32"),
-            "prev_action": y,
-            "prev_reward": np.array(z, dtype="float32")
-        }
+
+        self.state = x.astype("float32")
         self.last_price = ohlc
         return self.state
 
