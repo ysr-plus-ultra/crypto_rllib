@@ -1,36 +1,30 @@
-import numpy as np
-import gymnasium as gym
-from gymnasium.spaces import Discrete, MultiDiscrete
-import tree  # pip install dm_tree
-from typing import Dict, List, Union
-from ray.rllib.models.modelv2 import ModelV2
+from typing import List
 
-from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
-from ray.rllib.models.utils import get_activation_fn
-from ray.rllib.policy.rnn_sequencing import add_time_dimension
+import numpy as np
+from ray.rllib.models.modelv2 import ModelV2
 from ray.rllib.models.preprocessors import get_preprocessor
+from ray.rllib.models.torch.recurrent_net import RecurrentNetwork as TorchRNN
+from ray.rllib.policy.rnn_sequencing import add_time_dimension
 from ray.rllib.policy.sample_batch import SampleBatch
 from ray.rllib.policy.view_requirement import ViewRequirement
-from ray.rllib.models.torch.recurrent_net import RecurrentNetwork as TorchRNN
-from ray.rllib.utils.typing import ModelConfigDict, TensorType
 from ray.rllib.utils.annotations import override
 from ray.rllib.utils.framework import try_import_torch
-from pprint import pprint
 from ray.rllib.utils.spaces.space_utils import get_base_struct_from_space
-
-from ray.rllib.utils.torch_utils import flatten_inputs_to_1d_tensor, one_hot
+from ray.rllib.utils.typing import TensorType
 
 import rnnlib
+
 torch, nn = try_import_torch()
+
 
 class CustomRNNModel(TorchRNN, nn.Module):
     def __init__(
-        self,
-        obs_space,
-        action_space,
-        num_outputs,
-        model_config,
-        name,
+            self,
+            obs_space,
+            action_space,
+            num_outputs,
+            model_config,
+            name,
     ):
         nn.Module.__init__(self)
         super().__init__(obs_space,
@@ -38,6 +32,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
                          num_outputs,
                          model_config,
                          name)
+        self.obs_size = get_preprocessor(obs_space)(obs_space).size
         self.fc_size = model_config["custom_model_config"]["fc_size"]
         self.cell_size = model_config["custom_model_config"]["lstm_size"]
         self.hidden_size = model_config["custom_model_config"]["hidden_size"]
@@ -47,25 +42,29 @@ class CustomRNNModel(TorchRNN, nn.Module):
 
         self.popart_beta = 1e-3
 
-        self.obs_embed = nn.Linear(model_config["custom_model_config"]["NUM_STATES"], self.fc_size)
-        self.prev_a_embed = nn.Linear(3, 3)
-        # self.prev_a_ln = nn.LayerNorm(3, eps=1e-8, elementwise_affine=False)
-        lstm_input_size = self.fc_size + 4
+        lstm_input_size = self.obs_size
 
         # self.activation = nn.ReLU()
         self.activation = nn.SiLU()
 
-        self.rnn = rnnlib.LRU(lstm_input_size, self.cell_size, self.hidden_size, batch_first=True)
+        self.wrapped_fc1 = nn.Linear(self.obs_size, self.fc_size, bias=False)
+        self.wrapped_ln1 = nn.LayerNorm(self.fc_size, eps=1e-8)
+        self.wrapped_fc2 = nn.Linear(self.fc_size, self.obs_size, bias=False)
+        self.wrapped_ln2 = nn.LayerNorm(self.obs_size, eps=1e-8)
+
+        self.rnn = rnnlib.LRU(self.obs_size, self.cell_size, self.hidden_size, batch_first=True)
         # self.rnn1 = nn.GRU(lstm_input_size, self.cell_size, batch_first=True)
         # self.rnn2 = nn.GRU(self.cell_size, self.cell_size, batch_first=True)
 
         # self.rnn1 = rnnlib.LayerNormGRU(lstm_input_size, self.cell_size, batch_first=True)
         # self.rnn2 = rnnlib.LayerNormGRU(self.cell_size, self.cell_size, batch_first=True)
 
-        self._logits_branch_sub = nn.Linear(self.cell_size, self.cell_size)
+        self._logits_branch_sub = nn.Linear(self.cell_size, self.cell_size, bias=False)
+        self._logits_branch_ln = nn.LayerNorm(self.cell_size, eps=1e-8)
         self._logits_branch = nn.Linear(self.cell_size, num_outputs)
 
-        self._value_branch_sub = nn.Linear(self.cell_size, self.cell_size)
+        self._value_branch_sub = nn.Linear(self.cell_size, self.cell_size, bias=False)
+        self._value_branch_ln = nn.LayerNorm(self.cell_size, eps=1e-8)
         self._value_branch = nn.Linear(self.cell_size, 1)
 
         self.mu = nn.Parameter(torch.tensor(0.0), requires_grad=False)
@@ -100,9 +99,8 @@ class CustomRNNModel(TorchRNN, nn.Module):
 
     def value_branch(self):
         assert self._features is not None, "must call forward() first"
-        value_branch = self._value_branch_sub(self._features)
-        value_branch = self.activation(value_branch)
-        value_branch = self._value_branch(value_branch)
+
+        value_branch = self._value_branch(self._features)
 
         return value_branch
 
@@ -113,10 +111,8 @@ class CustomRNNModel(TorchRNN, nn.Module):
 
         return torch.reshape(value_output, [-1])
 
-
     def normalized_value_function(self):
         normalized_output = self.value_branch()
-
 
         return torch.reshape(normalized_output, [-1])
 
@@ -125,7 +121,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
             updated_mu = (1 - self.popart_beta) * self.mu + self.popart_beta * self.new_mu
             updated_nu = (1 - self.popart_beta) * self.nu + self.popart_beta * self.new_nu
 
-            updated_sigma = torch.sqrt(updated_nu - torch.pow(updated_mu,2))
+            updated_sigma = torch.sqrt(updated_nu - torch.pow(updated_mu, 2))
             updated_sigma = torch.clamp(updated_sigma, 1e-6, 1e6)
 
             updated_xi = (1 - self.popart_beta) * self.xi + self.popart_beta * self.new_xi
@@ -133,12 +129,12 @@ class CustomRNNModel(TorchRNN, nn.Module):
 
             moment3 = updated_xi - 3 * (updated_mu * updated_nu) + 2 * (torch.pow(updated_mu, 3))
             updated_skewness = moment3 / torch.pow(updated_sigma, 3)
-            moment4 = updated_omicron - 4 * (updated_mu * updated_xi) + 6 * (torch.pow(updated_mu, 2) * updated_nu) - 3 * (torch.pow(updated_mu, 4))
+            moment4 = updated_omicron - 4 * (updated_mu * updated_xi) + 6 * (
+                        torch.pow(updated_mu, 2) * updated_nu) - 3 * (torch.pow(updated_mu, 4))
             updated_kurtosis = moment4 / torch.pow(updated_sigma, 4)
 
-            self._value_branch.weight *= self.sigma / updated_sigma
-            self._value_branch.bias *= self.sigma / updated_sigma
-            self._value_branch.bias += (self.mu - updated_mu) / updated_sigma
+            self._value_branch.weight.copy_(self._value_branch.weight * self.sigma / updated_sigma)
+            self._value_branch.bias.copy_((self._value_branch.bias * self.sigma + self.mu - updated_mu) / updated_sigma)
 
             self.mu.copy_(updated_mu)
             self.nu.copy_(updated_nu)
@@ -149,26 +145,20 @@ class CustomRNNModel(TorchRNN, nn.Module):
             self.skewness.copy_(updated_skewness)
             self.kurtosis.copy_(updated_kurtosis)
 
-
         return self.mu, self.sigma
 
     @override(ModelV2)
-    def forward(self, input_dict, state, seq_lens: TensorType,):
-        wrapped_out = []
+    def forward(self, input_dict, state, seq_lens: TensorType, ):
 
-        obs_input = input_dict["obs"]["ohlc"].float()
-        obs_input = self.obs_embed(obs_input)
-        obs_input = self.activation(obs_input)
-        wrapped_out.append(obs_input)
+        wrapped_out = input_dict["obs_flat"].float()
+        skip_connection = wrapped_out
 
-        action_input = input_dict["obs"]["prev_action"].float()
-        action_input = self.prev_a_embed(action_input)
-        action_input = self.activation(action_input)
-        wrapped_out.append(action_input)
-
-        wrapped_out.append(input_dict["obs"]["prev_reward"].float())
-
-        wrapped_out = torch.cat(wrapped_out, dim=1)
+        wrapped_out = self.wrapped_fc1(wrapped_out)
+        wrapped_out = self.wrapped_ln1(wrapped_out)
+        wrapped_out = self.activation(wrapped_out)
+        wrapped_out = self.wrapped_fc2(wrapped_out) + skip_connection
+        wrapped_out = self.wrapped_ln2(wrapped_out)
+        wrapped_out = self.activation(wrapped_out)
 
         if isinstance(seq_lens, np.ndarray):
             seq_lens = torch.Tensor(seq_lens).int()
@@ -223,23 +213,21 @@ class CustomRNNModel(TorchRNN, nn.Module):
 
     @override(TorchRNN)
     def forward_rnn(
-        self, inputs: TensorType, state: List[TensorType], seq_lens: TensorType
+            self, inputs: TensorType, state: List[TensorType], seq_lens: TensorType
     ) -> (TensorType, List[TensorType]):
 
-        self._features, [h, c] = self.rnn(
+        _features, [h, c] = self.rnn(
             inputs, [torch.unsqueeze(state[0], 0), torch.unsqueeze(state[1], 0)]
         )
-
-        model_out = self._logits_branch_sub(self._features)
-        model_out = self.activation(model_out)
-        model_out = self._logits_branch(model_out)
+        self._features = _features + inputs
+        model_out = self._logits_branch(self._features)
         return model_out, [torch.squeeze(h, 0), torch.squeeze(c, 0)]
 
     @override(ModelV2)
     def get_initial_state(self) -> List[TensorType]:
         # Place hidden states on same device as model.
         h = [self._logits_branch.weight.new(
-                1, self.hidden_size).zero_().squeeze(0),
+            1, self.hidden_size).zero_().squeeze(0),
              self._logits_branch.weight.new(
                  1, self.hidden_size).zero_().squeeze(0),
              ]

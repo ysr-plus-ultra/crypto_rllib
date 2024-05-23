@@ -13,7 +13,7 @@ from crypto_env import CryptoEnv
 from ray.tune.registry import register_env
 from pprint import pprint
 env_cfg = {
-    "NUM_STATES": 4,
+    "NUM_STATES": 8,
     "NUM_ACTIONS": 3,
 
     "FEE": 0.1,
@@ -24,8 +24,8 @@ env_cfg = {
 }
 # load_model_path = "/checkpoint/model_eval_32_copy"
 load_model_path = None
-new_model_path = "/checkpoint/model_20240509"
-eval_model_path = "/checkpoint/model_eval_32"
+new_model_path = "/checkpoint/model_20240519"
+eval_model_path = "/checkpoint/model_eval_128"
 
 # model setup
 from custom.custom_model import CustomRNNModel
@@ -48,14 +48,14 @@ config = config.training(gamma=0.5,
                              "lstm_use_prev_action": False,
                              "lstm_use_prev_reward": False,
                              "custom_model_config": {"NUM_STATES": env_cfg["NUM_STATES"],
-                                                     "fc_size": 4,
+                                                     "fc_size": 32,
                                                      "lstm_size": 8,
-                                                     "hidden_size": 64},
+                                                     "hidden_size": 128},
                              "max_seq_len": num_rollout,
                          },
                          vtrace=True,
                          opt_type="rmsprop",
-                         entropy_coeff=0.01,
+                         entropy_coeff=0.001,
                          vf_loss_coeff=0.5,
                          momentum=0.0,
                          epsilon=1e-08,
@@ -71,7 +71,7 @@ config = config.resources(num_gpus = 1.0,
                           num_gpus_per_worker=0.5/num_env_workers/2
                           )
 config = config.environment(env = "my_env", env_config=env_cfg)
-config = config.exploration(exploration_config = {"type": "StochasticSampling", "random_timesteps": 1e6},)
+config = config.exploration(exploration_config = {"type": "StochasticSampling", "random_timesteps": 0},)
 config = config.rollouts(num_rollout_workers=num_env_workers,
                          num_envs_per_worker=num_env,
                          rollout_fragment_length=num_rollout,)
@@ -105,7 +105,7 @@ if load_model_path is not None:
     algo.restore(load_model_path)
 last_time = time.time()
 target_metric = -1.0
-average_weight = 0.9
+average_weight = 0.6
 max_metric = 0.0
 ma_benchmark = 0.0
 while 1:
@@ -118,10 +118,14 @@ while 1:
         ma_benchmark = (average_weight * ma_benchmark) + ((1-average_weight)*benchmark)
         if ma_benchmark > max_metric:
             max_metric = ma_benchmark
-            print(datetime.fromtimestamp(current_time), f"eval: {max_metric:.4f} = {max_metric*frameskip:.4f} / {frameskip:.4f}")
+            print(datetime.fromtimestamp(current_time), f"eval: {benchmark:.4f} ({max_metric:.4f}) = {max_metric*frameskip:.4f} / {frameskip:.4f}")
             algo.save(eval_model_path)
     except:
         pass
+
+    if (current_time - last_time) > 600:
+        algo.save(new_model_path)
+        last_time = current_time
 
 algo.save(new_model_path)
 ray.shutdown()

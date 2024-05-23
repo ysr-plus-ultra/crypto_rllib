@@ -160,7 +160,7 @@ class VTraceLoss:
         convex_loss = (self.pg_loss) * (1+torch.pow(model.alpha*torch.exp(model.beta) - 1, 2)) \
                       + 0.1 * torch.pow(model.alpha, 2)
         # # The summed weighted loss.
-        self.total_loss = self.pg_loss - self.entropy * entropy_coeff
+        self.total_loss = convex_loss - self.entropy * entropy_coeff
 
 
 def make_time_major(policy, seq_lens, tensor):

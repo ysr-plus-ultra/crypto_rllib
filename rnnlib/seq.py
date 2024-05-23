@@ -545,8 +545,10 @@ class LayerNormLSTM(LSTMFrame):
 
 class LRUCell(nn.Module):
     """
+    It's based on tf.contrib.rnn.LayerNormBasicLSTMCell
     Reference:
-        https://github.com/Gothos/LRU-pytorch/blob/main/LRU_pytorch/LRU.py
+    - https://www.tensorflow.org/api_docs/python/tf/contrib/rnn/LayerNormBasicLSTMCell
+    - https://github.com/tensorflow/tensorflow/blob/r1.12/tensorflow/contrib/rnn/python/ops/rnn_cell.py#L1335
     """
 
     def __init__(self,
@@ -577,7 +579,9 @@ class LRUCell(nn.Module):
         self.D=nn.Parameter(torch.randn([self.input_size, self.output_size])/math.sqrt(input_size))
 
         Lambda_mod = torch.exp(-torch.exp(self.nu_log))
+
         self.gamma_log=nn.Parameter(torch.log(torch.sqrt(torch.ones_like(Lambda_mod)-torch.square(Lambda_mod))))
+
     def forward(self, input, state):
         """
         :param input: a tensor of shape (batch_size, input_size)
@@ -587,7 +591,10 @@ class LRUCell(nn.Module):
         B = torch.complex(self.B_re, self.B_im)
         C = torch.complex(self.C_re, self.C_im)
 
-        Lambda = torch.exp(torch.complex(-torch.exp(self.nu_log), torch.exp(self.theta_log)))
+        Lambda_mod = torch.exp(-torch.exp(self.nu_log))
+        Lambda_re = Lambda_mod * torch.cos(torch.exp(self.theta_log))
+        Lambda_im = Lambda_mod * torch.sin(torch.exp(self.theta_log))
+        Lambda = torch.complex(Lambda_re, Lambda_im)
         gammas = torch.exp(self.gamma_log)
 
         x_k = input

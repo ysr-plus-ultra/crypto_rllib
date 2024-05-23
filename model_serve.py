@@ -11,6 +11,7 @@ import numpy as np
 import gymnasium as gym
 from gymnasium.spaces import Discrete, Box
 import os
+from gymnasium.spaces import Dict, Discrete, Box
 import zlib, json, base64
 from collections import defaultdict
 ZIPJSON_KEY = 'base64(zip(o))'
@@ -18,9 +19,14 @@ os.environ["CUBLAS_WORKSPACE_CONFIG"]=":4096:2"
 torch.backends.cudnn.benchmark = True
 ModelCatalog.register_custom_model("my_torch_model", CustomRNNModel)
 _action_space = Discrete(3)
-_observation_space = Box(-np.inf, np.inf, shape=(4,), dtype=np.float32)
-_lstm_size = 32
-model_path = "/checkpoint/model_eval_32"
+_observation_space = Dict(
+    {
+        "ohlc": Box(-np.inf, np.inf, shape=(4,), dtype=np.float32),
+        "prev_action": Box(0, 1.0, shape=(3,), dtype=np.float32),
+        "prev_reward": Box(-np.inf, np.inf, shape=(1,), dtype=np.float32)
+    })
+_lstm_size = 128
+eval_model_path = "/checkpoint/model_eval_128"
 class NumpyArrayEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, np.ndarray):
@@ -43,9 +49,11 @@ class ServeModel:
             impala_config = impala_config.training(gamma=0.0, lr=0.001, train_batch_size=500,
                                                    model={
                                                        "custom_model": "my_torch_model",
-                                                       "lstm_use_prev_action": True,
-                                                       "lstm_use_prev_reward": True,
                                                        "custom_model_config": {
+                                                           "NUM_STATES": 4,
+                                                           "fc_size": 32,
+                                                           "lstm_size": 8,
+                                                           "hidden_size": 128
                                                        },
                                                    },
                                                    ) \
@@ -69,8 +77,13 @@ class ServeModel:
     async def __call__(self, request: Request):
         compressed_input = await request.body()
         json_input = json_unzip(compressed_input)
-
-        obs = [np.array(x) for x in json_input["observation"]]
+        _obs = json_input["observation"]
+        obs = defaultdict(list)
+        for x in _obs:
+            for k, v in x.items():
+                obs[k].append(v)
+        for k, v in obs.items():
+            obs[k] = np.array(v, dtype=np.float32)
         prev_a = json_input["prev_a"]
         prev_r = json_input["prev_r"]
         magic_number = json_input["magic_number"]
@@ -78,7 +91,7 @@ class ServeModel:
         state_c = np.array([self.state_c[x] for x in magic_number])
 
         action, state_out, _ = self._policy.compute_actions(
-            obs_batch=np.array(obs),
+            obs_batch=obs,
             state_batches=[state_h, state_c],
             prev_action_batch=prev_a,
             prev_reward_batch=prev_r)
@@ -94,7 +107,7 @@ if __name__ == "__main__":
     try:
         ray.init(address="auto", namespace="serve")
         serve.start(detached=True)
-        impala_model = ServeModel.bind(model_path)
+        impala_model = ServeModel.bind(eval_model_path)
         serve.run(impala_model)
     finally:
         ray.shutdown()

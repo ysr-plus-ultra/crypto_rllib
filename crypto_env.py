@@ -3,7 +3,7 @@ import random
 import gymnasium as gym
 import numpy as np
 import pandas as pd
-from gymnasium.spaces import Dict, Discrete, Box
+from gymnasium.spaces import Discrete, Box
 from pymongo import MongoClient
 
 import nb.auth_file as myauth
@@ -14,12 +14,7 @@ class CryptoEnv(gym.Env):
 
         self.last_reward = None
         self.last_action = None
-        self.observation_space = Dict(
-            {
-                "ohlc": Box(-np.inf, np.inf, shape=(config['NUM_STATES'],), dtype=np.float32),
-                "prev_action": Box(0, 1.0, shape=(config['NUM_ACTIONS'],), dtype=np.float32),
-                "prev_reward": Box(-np.inf, np.inf, shape=(1,), dtype=np.float32)
-            })
+        self.observation_space = Box(-np.inf, np.inf, shape=(config['NUM_STATES'],), dtype=np.float32)
         self.action_space = Discrete(config['NUM_ACTIONS'])
         self.max_fee = config['FEE']
         self.max_ep = config['MAX_EP']
@@ -103,12 +98,12 @@ class CryptoEnv(gym.Env):
         self.state_stack = self.df[self.columns].to_numpy(copy=True)
 
         # detrending
-        if not self.mode == "train":
-            clip_value = self.gap_stack[self._period1:]
-            self.gap_stack -= np.nanmean(clip_value)
+        # if not self.mode == "train":
+        #     clip_value = self.gap_stack[self._period1:]
+        #     self.gap_stack -= np.nanmean(clip_value)
 
-        # clip_value = self.gap_stack[self._period1:]
-        # self.gap_stack -= np.nanmean(clip_value)
+        clip_value = self.gap_stack[self._period1:]
+        self.gap_stack -= np.nanmean(clip_value)
 
         self.set_fee()
         self.last_price = None
@@ -201,11 +196,7 @@ class CryptoEnv(gym.Env):
         x = np.clip(np.log(div_ohlcv), lower_bound, upper_bound) * self.timeframe_adjust
         y = np.eye(self.num_actions, dtype="float32")[self.last_action]
         z = [self.last_reward]
-        self.state = {
-            "ohlc": x.astype("float32"),
-            "prev_action": y,
-            "prev_reward": np.array(z, dtype="float32")
-        }
+        self.state = np.concatenate([x, y, z], dtype=np.float32)
         self.last_price = ohlc
         return self.state
 
