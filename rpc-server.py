@@ -21,14 +21,13 @@ from custom.custom_model import CustomRNNModel
 SERVER_ADDRESS = "localhost"
 SERVER_BASE_PORT = 9900
 env_cfg = {
-    "NUM_STATES": 4,
+    "NUM_STATES": 8,
     "NUM_ACTIONS": 3,
 
     "FEE": 0.1,
-    "MAX_EP": 15000,
-    "DF_SIZE": 114862,
-    # "DF_SIZE": 172800,
-    "frameskip": 5,
+    "MAX_EP": 12000,
+    "DF_SIZE": 186982,
+    "frameskip": 3,
     "mode": "train",
 }
 def env_creator(env_config):
@@ -41,7 +40,9 @@ eval_model_path = "/checkpoint/model_eval_32"
 
 
 ModelCatalog.register_custom_model("my_torch_model", CustomRNNModel)
-num_rollout = 10
+num_env_workers = 4
+num_env = 0
+num_rollout = 64
 if __name__ == "__main__":
     logger = logging.getLogger(__name__)
     os.environ["TUNE_DISABLE_AUTO_CALLBACK_LOGGERS"] = "1"
@@ -51,19 +52,22 @@ if __name__ == "__main__":
     # the client needs to create its own policy copy for local inference.
     config = (
         ImpalaConfig()
-        .training(gamma=0.99,
+        .training(gamma=0.0,
                   lr=1e-3,
                   train_batch_size=32,
                   model={
                       "custom_model": "my_torch_model",
-                      "lstm_use_prev_action": True,
-                      "lstm_use_prev_reward": True,
-                      "custom_model_config": {},
+                      "lstm_use_prev_action": False,
+                      "lstm_use_prev_reward": False,
+                      "custom_model_config": {"NUM_STATES": env_cfg["NUM_STATES"],
+                                              "fc_size": 16,
+                                              "lstm_size": 8,
+                                              "hidden_size": 64},
                       "max_seq_len": num_rollout,
                   },
                   vtrace=True,
                   opt_type="rmsprop",
-                  entropy_coeff=0.01,
+                  entropy_coeff=0.001,
                   vf_loss_coeff=0.5,
                   momentum=0.0,
                   epsilon=1e-08,
@@ -75,41 +79,32 @@ if __name__ == "__main__":
                   )
         # Indicate that the Algorithm we setup here doesn't need an actual env.
         # Allow spaces to be determined by user (see below).
-        .environment(
-            env=None,
-            observation_space=gym.spaces.Box(float("-inf"), float("inf"), (env_cfg['NUM_STATES'],), dtype=np.float32),
-            action_space=gym.spaces.Discrete(env_cfg['NUM_ACTIONS']),
-        )
+        .environment(env = "my_env", env_config=env_cfg)
         # DL framework to use.
         .framework(framework="torch")
         # Use the `PolicyServerInput` to generate experiences.
-        .offline_data(input_=lambda ioctx: PolicyServerInput(ioctx, SERVER_ADDRESS, SERVER_BASE_PORT, 0, 512)
+        .offline_data(input_=lambda ioctx: PolicyServerInput(ioctx, SERVER_ADDRESS, SERVER_BASE_PORT),
+                      input_config = {"env": "my_env", "env_config": env_cfg}
                       )
         # Use n worker processes to listen on different ports.
         .resources(num_gpus=1,
                    num_cpus_per_worker = 4,
                    num_gpus_per_worker = 0.1
                    )
-        .rollouts(num_rollout_workers=2,
-                  rollout_fragment_length=10,
+        .rollouts(num_rollout_workers=0,
+                  rollout_fragment_length=num_rollout,
                   enable_connectors=False,
                   )
         # Disable OPE, since the rollouts are coming from online clients.
         .evaluation(off_policy_estimation_methods={})
         # Set to INFO so we'll see the server's actual address:port.
-        .exploration(
-            exploration_config={
-                "type": "StochasticSampling",
-                "random_timesteps": 2e7
-            },
-        )
     )
     config.experimental(_enable_new_api_stack=False)
-    eval_config = copy.deepcopy(env_cfg)
-    eval_config["MAX_EP"] = 7467
-    eval_config["DF_SIZE"] = 7467
-    eval_config["mode"] = "eval"
-    eval_config["FEE"] = 0.05
+    # eval_config = copy.deepcopy(env_cfg)
+    # eval_config["MAX_EP"] = 7467
+    # eval_config["DF_SIZE"] = 7467
+    # eval_config["mode"] = "eval"
+    # eval_config["FEE"] = 0.05
     #
     # config.evaluation(evaluation_interval=10,
     #                   evaluation_duration=128,

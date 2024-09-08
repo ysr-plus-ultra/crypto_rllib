@@ -3,14 +3,13 @@ import warnings
 warnings.simplefilter("ignore", UserWarning)
 SERVER_BASE_PORT = 9900
 env_cfg = {
-    "NUM_STATES": 4,
+    "NUM_STATES": 8,
     "NUM_ACTIONS": 3,
 
     "FEE": 0.1,
-    "MAX_EP": 15000,
-    "DF_SIZE": 114862,
-    # "DF_SIZE": 172800,
-    "frameskip": 5,
+    "MAX_EP": 12000,
+    "DF_SIZE": 186982,
+    "frameskip": 3,
     "mode": "train",
 }
 ACTORS = 16
@@ -36,9 +35,9 @@ class Agent(multiprocessing.Process):
         obs, info = env.reset()
         eid = client.start_episode(training_enabled=True)
         rewards = 0.0
+        i = 0
         while not self.stop_signal:
             action = client.get_action(eid, obs)
-
             # Perform a step in the external simulator (env).
             obs, reward, terminated, truncated, info = env.step(action)
             rewards += reward

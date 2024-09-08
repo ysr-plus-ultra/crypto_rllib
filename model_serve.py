@@ -1,32 +1,34 @@
 import ray
-
+from typing import Dict
+import json
 from custom.impala_custom import ImpalaConfig
 from ray import serve
 from ray.rllib.models import ModelCatalog
 from custom.custom_model import CustomRNNModel
 from starlette.requests import Request
 from ray.rllib.utils.framework import try_import_torch
+from crypto_env import CryptoEnv
+from ray.tune.registry import register_env
 torch, nn = try_import_torch()
-import numpy as np
-import gymnasium as gym
-from gymnasium.spaces import Discrete, Box
-import os
-from gymnasium.spaces import Dict, Discrete, Box
-import zlib, json, base64
+from ray.serve.schema import LoggingConfig
 from collections import defaultdict
-ZIPJSON_KEY = 'base64(zip(o))'
-os.environ["CUBLAS_WORKSPACE_CONFIG"]=":4096:2"
-torch.backends.cudnn.benchmark = True
+import numpy as np
 ModelCatalog.register_custom_model("my_torch_model", CustomRNNModel)
-_action_space = Discrete(3)
-_observation_space = Dict(
-    {
-        "ohlc": Box(-np.inf, np.inf, shape=(4,), dtype=np.float32),
-        "prev_action": Box(0, 1.0, shape=(3,), dtype=np.float32),
-        "prev_reward": Box(-np.inf, np.inf, shape=(1,), dtype=np.float32)
-    })
-_lstm_size = 128
-eval_model_path = "/checkpoint/model_eval_128"
+# model setup end
+def env_creator(env_config):
+    return CryptoEnv(env_config)
+register_env("TradingEnv", env_creator)
+eval_model_path = "/checkpoint/model_eval_256"
+env_cfg = {
+    "FEE": 0.1,
+    "MAX_EP": 8000,
+    "DF1_SIZE": 115818,
+    "DF2_SIZE": 5831,
+    "DF3_SIZE": 7376,
+    "MODE": "train",
+}
+lstm_size = 128
+
 class NumpyArrayEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, np.ndarray):
@@ -41,73 +43,52 @@ def json_unzip(j, insist=True):
     j = json.loads(j)
     return j
 
-@serve.deployment(route_prefix="/model", ray_actor_options={"num_gpus": 1})
+@serve.deployment(
+    route_prefix="/model",
+    ray_actor_options={"num_gpus": 1},
+    logging_config=LoggingConfig(log_level="WARN"),)
 class ServeModel:
     def __init__(self, checkpoint_path):
-        try:
-            impala_config = ImpalaConfig()
-            impala_config = impala_config.training(gamma=0.0, lr=0.001, train_batch_size=500,
-                                                   model={
-                                                       "custom_model": "my_torch_model",
-                                                       "custom_model_config": {
-                                                           "NUM_STATES": 4,
-                                                           "fc_size": 32,
-                                                           "lstm_size": 8,
-                                                           "hidden_size": 128
-                                                       },
-                                                   },
-                                                   ) \
-                .framework(framework="torch") \
-                .environment(observation_space=_observation_space, action_space=_action_space,
-                             disable_env_checking=True, ) \
-                .resources(num_gpus=1,
-                          )\
-                .rollouts(num_rollout_workers=0)
-            self.algorithm = impala_config.build()
-            self.algorithm.restore(checkpoint_path)
-            self._policy = self.algorithm.workers.local_worker().get_policy()
-            self.state_h = defaultdict(lambda: np.zeros(_lstm_size))
-            self.state_c = defaultdict(lambda: np.zeros(_lstm_size))
+        impala_config = ImpalaConfig()
+        impala_config = (impala_config.
+                         training(gamma=0.0, lr=0.001, train_batch_size=500,
+                                               model={
+                                                   "custom_model": "my_torch_model",
+                                                   "lstm_use_prev_action": False,
+                                                   "lstm_use_prev_reward": False,
+                                                   "custom_model_config": {"encoder_size": 4,
+                                                                           "hidden_size": 512,
+                                                                           "cell_size": 32,
+                                                                           "popart_beta": 1e-3},
+                                               },
+                                               )
+                         .framework(framework="torch")
+                         .environment(env="TradingEnv",
+                                      env_config=env_cfg,)
+                         .resources(num_gpus=1)
+                         .env_runners(num_env_runners=0)
+                         )
 
-        except Exception as e:
-            print(e)
-            import traceback
-            traceback.print_exc()
+        self.algo = impala_config.build()
+        self.algo.restore(checkpoint_path)
+        self.policy = self.algo.get_policy()
+        self.state = defaultdict(lambda: [np.zeros(lstm_size), np.zeros(lstm_size)])
 
-    async def __call__(self, request: Request):
-        compressed_input = await request.body()
-        json_input = json_unzip(compressed_input)
-        _obs = json_input["observation"]
-        obs = defaultdict(list)
-        for x in _obs:
-            for k, v in x.items():
-                obs[k].append(v)
-        for k, v in obs.items():
-            obs[k] = np.array(v, dtype=np.float32)
-        prev_a = json_input["prev_a"]
-        prev_r = json_input["prev_r"]
-        magic_number = json_input["magic_number"]
-        state_h = np.array([self.state_h[x] for x in magic_number])
-        state_c = np.array([self.state_c[x] for x in magic_number])
+    async def __call__(self, starlette_request: Request) -> Dict:
+        request = await starlette_request.body()
+        request = request.decode("utf-8")
+        request = json.loads(request)
 
-        action, state_out, _ = self._policy.compute_actions(
-            obs_batch=obs,
-            state_batches=[state_h, state_c],
-            prev_action_batch=prev_a,
-            prev_reward_batch=prev_r)
+        action, state_out, _ = self.algo.compute_actions(
+            observations=request,
+            state=self.state
+        )
 
-        value = self._policy.model.value_function()
-        compressed_output = json_zip({"action": action, "value": value.to('cpu').detach().numpy() })
-        for x, s_h, s_c in zip(magic_number, state_out[0], state_out[1]):
-            self.state_h[x] = s_h
-            self.state_c[x] = s_c
-        return compressed_output
+        for k,v in state_out.items():
+            self.state[k] = v
+        return action
 
-if __name__ == "__main__":
-    try:
-        ray.init(address="auto", namespace="serve")
-        serve.start(detached=True)
-        impala_model = ServeModel.bind(eval_model_path)
-        serve.run(impala_model)
-    finally:
-        ray.shutdown()
+# Defining the builder function. This is so we can start our deployment via:
+# `serve run [this py module]:rl_module checkpoint=[some algo checkpoint path]`
+def rl_module(args: Dict[str, str]):
+    return ServeModel.bind(args["checkpoint"])
