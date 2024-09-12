@@ -54,9 +54,9 @@ def main():
                                  "lstm_use_prev_action": False,
                                  "lstm_use_prev_reward": False,
                                  "custom_model_config": {
-                                     "encoder_size": 4,
-                                     "hidden_size": 512,
-                                     "cell_size": 256,
+                                     "encoder_size": 6,
+                                     "hidden_size": 1024,
+                                     "cell_size": 128,
                                      "popart_beta": 1e-3
                                  },
                                  "max_seq_len": num_rollout,

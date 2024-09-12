@@ -28,8 +28,6 @@ from ray.rllib.utils.torch_utils import (
 )
 from ray.rllib.utils.typing import TensorType
 
-from grokfast_pytorch import GrokFastAdamW
-
 torch, nn = try_import_torch()
 
 logger = logging.getLogger(__name__)
@@ -261,8 +259,9 @@ class VTraceOptimizer:
                              eps=self.config["epsilon"],
                              normalize_lr=False,
                              grokfast=False,
-                             grokfast_alpha=0.99,
-                             grokfast_lamb=.5,
+                             grokfast_alpha=0.5,
+                             grokfast_lamb=0.5,
+                             grokfast_after_step=1000,
                              )
 
         # if self.config["opt_type"] == "adam":

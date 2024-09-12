@@ -1,10 +1,12 @@
+import time
+
 import gymnasium as gym
 import numpy as np
 import pandas as pd
+from dotenv import load_dotenv
 from gymnasium.spaces import Discrete, Box, Dict
 from pymongo import MongoClient
-from dotenv import load_dotenv
-import time
+
 load_dotenv()
 import os
 
@@ -115,6 +117,7 @@ class CryptoEnv(gym.Env):
         self.gap_mu = 0.0
 
         # detrending
+
         clip_value = self.gap_stack[self._period1:]
         self.gap_mu = np.nanmean(clip_value)
         self.gap_stack -= self.gap_mu
@@ -167,9 +170,8 @@ class CryptoEnv(gym.Env):
         }
 
         # drawdown
-        if self.mode == "train":
-            if (self.cumsum - self.max_wallet) <= np.log(self.stop_level):
-                self.done = True
+        if (self.cumsum - self.max_wallet) <= np.log(self.stop_level):
+            self.done = True
 
         return new_state, normal_reward, self.done, self.truncated, info
 
@@ -180,7 +182,7 @@ class CryptoEnv(gym.Env):
 
     def set_fee(self):
         if self.mode == "train":
-            target_loc = min((time.time() - self.start_time)/3600, 3.0) / 3.0 * self.max_fee
+            target_loc = min(max((time.time() - self.start_time)/3600 - 1, 0.0), 3.0) / 3.0 * self.max_fee
             self.fee = self._np_random.normal(loc=target_loc, scale=self.max_fee/2)
         else:
             self.fee = self.max_fee

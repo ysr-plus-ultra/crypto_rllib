@@ -46,10 +46,10 @@ class CustomRNNModel(TorchRNN, nn.Module):
         self.activation = nn.SiLU()
 
         self.encoder_fc = nn.Linear(self.obs_size, self.encoder_size)
-        self.encoder_ln = nn.RMSNorm(self.encoder_size)
+        # self.encoder_ln = nn.RMSNorm(self.encoder_size)
 
         self.rnn = rnnlib.LRU(self.encoder_size, self.cell_size, self.hidden_size, batch_first=True)
-        self.rnn_ln = nn.RMSNorm(self.cell_size)
+        # self.rnn_ln = nn.RMSNorm(self.cell_size)
 
         self._logits_branch = nn.Linear(self.cell_size, num_outputs)
 
@@ -142,7 +142,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
         wrapped_out = input_dict["obs_flat"].float()
 
         self._encoder = self.encoder_fc(wrapped_out)
-        self._encoder = self.encoder_ln(self._encoder)
+        # self._encoder = self.encoder_ln(self._encoder)
         self._encoder = self.activation(self._encoder)
 
         if isinstance(seq_lens, np.ndarray):
@@ -168,8 +168,7 @@ class CustomRNNModel(TorchRNN, nn.Module):
         self._features, [h, c] = self.rnn(
             inputs, [torch.unsqueeze(state[0], 0), torch.unsqueeze(state[1], 0)]
         )
-        self._features = self.rnn_ln(self._features)
-        self._features = self.activation(self._features)
+        # self._features = self.rnn_ln(self._features)
 
         model_out = self._logits_branch(self._features)
 
